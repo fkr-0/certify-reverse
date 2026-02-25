@@ -1,0 +1,12 @@
+README.md
+pyproject.toml
+src/certify_reverse/__init__.py
+src/certify_reverse/cli.py
+src/certify_reverse/status_cli.py
+src/certify_reverse/templates.py
+src/certify_reverse.egg-info/PKG-INFO
+src/certify_reverse.egg-info/SOURCES.txt
+src/certify_reverse.egg-info/dependency_links.txt
+src/certify_reverse.egg-info/entry_points.txt
+src/certify_reverse.egg-info/requires.txt
+src/certify_reverse.egg-info/top_level.txt

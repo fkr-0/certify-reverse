@@ -1,57 +1,29 @@
-# Architecture
+# Architecture (v0.3.0)
 
-## Components
+## Packaging
 
-- `caddy` container:
-  - Runs `boot.sh` then `app.py`.
-  - Builds and runs Caddy with DNS provider plugin.
-  - Owns generated configs and cert artifacts in `/data`.
-- `dnsmasq` container:
-  - Serves wildcard DNS resolution for the configured domain.
-  - Uses generated `/data/dnsmasq.conf`.
+Python code is packaged under `src/certify_reverse` and installed into container image with `pip install .`.
 
-## Control Plane
+Console scripts:
+- `certify-reverse` -> main runtime CLI
+- `certify-reverse-status` -> status viewer
 
-`app.py` does all orchestration:
-- parses `config.yml` into dataclasses,
-- validates/ensures Caddy binary with required DNS module,
-- renders Caddy and dnsmasq config files,
-- exports Caddy internal CA certificates,
-- copies CA certs into per-service directories,
-- optionally generates service certs for HTTPS upstreams,
-- replaces itself with Caddy process (`os.execvp`).
+## Runtime flow
 
-## Generated Artifacts
+1. Container entrypoint runs `boot.sh`.
+2. `boot.sh` executes `certify-reverse`.
+3. App reads env/upstream config files under `/config`.
+4. App optionally rebuilds Caddy binary with required DNS plugin.
+5. App renders config/status artifacts under `/data`.
+6. App may switch to `/data/Caddyfile.overwrite` if present.
+7. App execs Caddy as PID 1.
 
-Primary artifacts in `/data`:
-- `caddy-rebuild`: generated Caddy binary.
-- `Caddyfile`: active runtime config.
-- `dnsmasq.conf`: wildcard resolver config.
-- `logs/app.log`: bootstrap logs (rotating file handler).
-- `exported-certs/`: internal CA exports for upstream trust.
-- `<service>/`: per-service CA cert copies + README.
+## Idempotency profile
 
-## TLS Model
+Idempotent:
+- deterministic rendering for fixed inputs,
+- no rebuild if plugin/binary already satisfies requirements.
 
-External TLS:
-- Caddy handles public cert automation using DNS-01 ACME.
-
-Internal TLS:
-- For `https` upstreams, Caddy uses trust pool configuration:
-  - explicit `trust_pool` path when configured,
-  - otherwise exported internal CA at `/data/exported-certs/caddy-internal-ca.pem`.
-- `skip_verify` disables cert validation and should be avoided.
-
-## Process Boundaries
-
-- Runtime inside container depends on Alpine packages installed by `boot.sh`.
-- `app.py` expects config path `/config.yml`.
-- `status.py` imports config/constants from `app.py` and reads `/data`.
-
-## Failure Surfaces
-
-- DNS provider plugin build failure (`xcaddy`).
-- Invalid/missing `config.yml`.
-- Missing DNS token or provider mismatch.
-- Internal CA unavailable early in startup (handled with warnings/fallback).
-- Upstream HTTPS verification failures when trust bundles are wrong.
+Non-fully-idempotent:
+- `latest` version pin is intentionally time-variable,
+- update check depends on live GitHub API response.

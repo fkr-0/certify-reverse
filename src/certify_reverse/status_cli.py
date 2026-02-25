@@ -21,7 +21,7 @@ except ImportError:
     sys.exit(1)
 
 # Import our app modules
-from app import ReverseProxyConfig, DATADIR, CFG
+from .cli import DATADIR, ReverseProxyConfig, configure_logging
 
 console = Console()
 log = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 def show_configuration_status():
     """Display current configuration in a formatted table."""
     try:
-        cfg = ReverseProxyConfig.from_file(CFG)
+        cfg = ReverseProxyConfig.from_sources()
         
         # Configuration overview table
         config_table = Table(title="🔧 Configuration Overview", box=box.ROUNDED)
@@ -116,7 +116,7 @@ def show_certificate_status():
 def show_service_directories():
     """Display service-specific directory structure."""
     try:
-        cfg = ReverseProxyConfig.from_file(CFG)
+        cfg = ReverseProxyConfig.from_sources()
         
         # Create a tree structure for service directories
         tree = Tree("📁 Service Directories", style="bold blue")
@@ -226,6 +226,7 @@ def show_full_status():
 def main():
     """Main entry point for status display."""
     import argparse
+    configure_logging()
     
     parser = argparse.ArgumentParser(description="Display Caddy reverse proxy status")
     parser.add_argument("--config", action="store_true", help="Show only configuration")

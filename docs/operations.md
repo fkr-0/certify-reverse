@@ -1,6 +1,6 @@
-# Operations Guide
+# Operations (v0.3.0)
 
-## Start and Stop
+## Start/stop
 
 ```bash
 ./caddy-docker.sh start
@@ -8,60 +8,33 @@
 ./caddy-docker.sh restart
 ```
 
-## Logs
+## Observe
 
 ```bash
-./caddy-docker.sh logs
 ./caddy-docker.sh logs --follow
-```
-
-Application log file path:
-- host: `./caddy-data/logs/app.log`
-- container: `/data/logs/app.log`
-
-## Runtime Inspection
-
-```bash
 ./caddy-docker.sh status
-./caddy-docker.sh config
 ./caddy-docker.sh data
+./caddy-docker.sh config
 ```
 
-## App Utility Commands
+## Caddy lifecycle
 
 ```bash
-./caddy-docker.sh app --show-certs
-./caddy-docker.sh app --export-certs
-./caddy-docker.sh app --create-service-dirs
-./caddy-docker.sh app --force-build
+./caddy-docker.sh check-updates
+./caddy-docker.sh rebuild-caddy
+./caddy-docker.sh print-caddyfile
 ```
 
-## Container Exec
+## Project/version helpers
 
 ```bash
-./caddy-docker.sh shell
-./caddy-docker.sh exec caddy version
+./caddy-docker.sh verify
+./caddy-docker.sh version
+./caddy-docker.sh bump-patch
+./caddy-docker.sh tag
 ```
 
-## Rebuild and Cleanup
+## Compose files
 
-```bash
-./caddy-docker.sh build
-./caddy-docker.sh down
-./caddy-docker.sh clean
-```
-
-## Troubleshooting Checklist
-
-1. `docker compose ps` shows both `caddy` and `dnsmasq` running.
-2. `./caddy-docker.sh logs --follow` has no Python traceback.
-3. `/data/Caddyfile` and `/data/dnsmasq.conf` exist.
-4. `/data/exported-certs/caddy-internal-ca.pem` exists for HTTPS upstream trust.
-5. DNS token and provider in `config.yml` are valid.
-
-## Safe Rollout Pattern
-
-1. Update `config.yml`.
-2. Run `docker compose config` locally.
-3. Restart with `./caddy-docker.sh restart`.
-4. Validate through logs and `./caddy-docker.sh app --show-certs`.
+- `docker/docker-compose.yml`
+- `docker/docker-compose.caddyfile.yml`

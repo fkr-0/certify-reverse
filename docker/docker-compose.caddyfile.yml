@@ -1,0 +1,4 @@
+services:
+  caddy:
+    entrypoint: ["certify-reverse", "--print-caddyfile"]
+    restart: "no"

@@ -1,0 +1,12 @@
+# Top-level keys are subdomains
+app:
+  ip: 10.0.0.10
+  port: 8080
+  scheme: http
+
+secure-app:
+  ip: 10.0.0.20
+  port: 8443
+  scheme: https
+  skip_verify: false
+  # trust_pool: /data/exported-certs/caddy-internal-ca.pem

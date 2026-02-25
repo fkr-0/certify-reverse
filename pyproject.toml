@@ -1,11 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "certify-reverse"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.3.5"
+description = "Caddy reverse proxy bootstrapper with DNS plugin automation"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 dependencies = [
-    "mkdocs>=1.6.1",
     "pyyaml>=6.0.2",
     "rich>=14.0.0",
 ]
+
+[project.scripts]
+certify-reverse = "certify_reverse.cli:entrypoint"
+certify-reverse-status = "certify_reverse.status_cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -16,3 +16,4 @@ __pycache__/
 # local secrets / runtime configuration
 config.yml
 .env
+upstreams.yml

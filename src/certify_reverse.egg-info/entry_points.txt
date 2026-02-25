@@ -1,0 +1,3 @@
+[console_scripts]
+certify-reverse = certify_reverse.cli:entrypoint
+certify-reverse-status = certify_reverse.status_cli:main

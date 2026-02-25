@@ -1,304 +1,215 @@
 #!/usr/bin/env bash
-# Caddy Docker Helper Script
-# Simplifies common Docker operations for the Caddy reverse proxy setup
-
 set -euo pipefail
 
 COMPOSE_SERVICE="caddy"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMPOSE_FILE="docker/docker-compose.yml"
+COMPOSE_CADDYFILE_OVERRIDE="docker/docker-compose.caddyfile.yml"
+VERSION_FILE="pyproject.toml"
 
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Helper functions
-log_info() {
-    echo -e "${BLUE}ℹ️  $1${NC}"
-}
+log_info() { echo -e "${BLUE}ℹ️  $1${NC}"; }
+log_success() { echo -e "${GREEN}✅ $1${NC}"; }
+log_warn() { echo -e "${YELLOW}⚠️  $1${NC}"; }
+log_error() { echo -e "${RED}❌ $1${NC}"; }
 
-log_success() {
-    echo -e "${GREEN}✅ $1${NC}"
-}
-
-log_warn() {
-    echo -e "${YELLOW}⚠️  $1${NC}"
-}
-
-log_error() {
-    echo -e "${RED}❌ $1${NC}"
-}
-
-# Check if docker-compose is available
 check_docker_compose() {
-    if command -v docker-compose >/dev/null 2>&1; then
-        DOCKER_COMPOSE="docker-compose"
-    elif command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-        DOCKER_COMPOSE="docker compose"
-    else
-        log_error "Neither 'docker-compose' nor 'docker compose' found. Please install Docker Compose."
-        exit 1
-    fi
+  if command -v docker-compose >/dev/null 2>&1; then
+    DOCKER_COMPOSE="docker-compose"
+  elif command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    DOCKER_COMPOSE="docker compose"
+  else
+    log_error "Neither 'docker-compose' nor 'docker compose' found."
+    exit 1
+  fi
 }
 
-# Show usage information
-show_usage() {
-    cat << EOF
-Caddy Docker Helper Script
+compose() {
+  cd "$SCRIPT_DIR"
+  HOST_UID="$(id -u)" HOST_GID="$(id -g)" $DOCKER_COMPOSE -f "$COMPOSE_FILE" "$@"
+}
 
+compose_caddyfile() {
+  cd "$SCRIPT_DIR"
+  HOST_UID="$(id -u)" HOST_GID="$(id -g)" $DOCKER_COMPOSE -f "$COMPOSE_FILE" -f "$COMPOSE_CADDYFILE_OVERRIDE" "$@"
+}
+
+project_version() {
+  sed -n 's/^version = "\([0-9]\+\.[0-9]\+\.[0-9]\+\)"/\1/p' "$SCRIPT_DIR/$VERSION_FILE"
+}
+
+show_usage() {
+  cat << EOFU
 Usage: $0 <command> [options]
 
-Commands:
-  start                 Start the Caddy services
-  stop                  Stop the Caddy services  
-  restart               Restart the Caddy services
-  logs [--follow]       Show Caddy logs (optionally follow)
-  shell                 Open interactive shell in Caddy container
-  exec <command>        Execute command in Caddy container
-  app [args...]         Run app.py in container with optional arguments
-  show-certs            Show Caddy internal certificates
-  force-rebuild         Force rebuild Caddy with DNS provider
-  config                Show current configuration
-  data                  Show all generated files in /data directory
-  status                Show container status
-  build                 Build/rebuild the Docker images
-  down                  Stop and remove containers
-  clean                 Remove containers, networks, and volumes
+Runtime commands:
+  start
+  stop
+  restart
+  logs [--follow]
+  shell
+  exec <command>
+  app [args...]
+  show-certs
+  check-updates
+  rebuild-caddy
+  print-caddyfile
+  config
+  data
+  status
+  build
+  down
+  clean
 
-Examples:
-  $0 app --show-certs              # Show certificates
-  $0 app --export-certs            # Export CA certificates
-  $0 app --create-service-dirs     # Create service-specific CA directories
-  $0 app --force-build             # Force rebuild Caddy
-  $0 exec caddy version            # Check Caddy version
-  $0 logs --follow                 # Follow logs in real-time
-  $0 shell                         # Interactive shell
-
-EOF
+Project commands:
+  verify
+  version
+  bump-patch
+  bump-minor
+  bump-major
+  release-note
+  tag
+EOFU
 }
 
-# Start services
-start_services() {
-    log_info "Starting Caddy services..."
-    cd "$SCRIPT_DIR"
-    $DOCKER_COMPOSE up -d
-    log_success "Services started"
-}
+start_services() { log_info "Starting services..."; compose up -d; log_success "Services started"; }
+stop_services() { log_info "Stopping services..."; compose stop; log_success "Services stopped"; }
+restart_services() { log_info "Restarting services..."; compose restart; log_success "Services restarted"; }
 
-# Stop services
-stop_services() {
-    log_info "Stopping Caddy services..."
-    cd "$SCRIPT_DIR"
-    $DOCKER_COMPOSE stop
-    log_success "Services stopped"
-}
-
-# Restart services
-restart_services() {
-    log_info "Restarting Caddy services..."
-    cd "$SCRIPT_DIR"
-    $DOCKER_COMPOSE restart
-    log_success "Services restarted"
-}
-
-# Show logs
 show_logs() {
-    cd "$SCRIPT_DIR"
-    if [[ "${1:-}" == "--follow" ]]; then
-        log_info "Following Caddy logs (Ctrl+C to exit)..."
-        $DOCKER_COMPOSE logs -f $COMPOSE_SERVICE
-    else
-        log_info "Showing recent Caddy logs..."
-        $DOCKER_COMPOSE logs --tail=50 $COMPOSE_SERVICE
-    fi
+  if [[ "${1:-}" == "--follow" ]]; then
+    compose logs -f "$COMPOSE_SERVICE"
+  else
+    compose logs --tail=50 "$COMPOSE_SERVICE"
+  fi
 }
 
-# Open shell
-open_shell() {
-    log_info "Opening interactive shell in Caddy container..."
-    cd "$SCRIPT_DIR"
-    $DOCKER_COMPOSE exec $COMPOSE_SERVICE /bin/sh
-}
+open_shell() { compose exec "$COMPOSE_SERVICE" /bin/sh; }
 
-# Execute command
 exec_command() {
-    if [[ $# -eq 0 ]]; then
-        log_error "No command specified for exec"
-        exit 1
-    fi
-    
-    log_info "Executing: $*"
-    cd "$SCRIPT_DIR"
-    $DOCKER_COMPOSE exec $COMPOSE_SERVICE "$@"
+  if [[ $# -eq 0 ]]; then
+    log_error "No command specified"
+    exit 1
+  fi
+  compose exec "$COMPOSE_SERVICE" "$@"
 }
 
-# Run app.py
-run_app() {
-    log_info "Running app.py with arguments: $*"
-    cd "$SCRIPT_DIR"
-    $DOCKER_COMPOSE exec $COMPOSE_SERVICE app "$@"
-}
+run_app() { compose exec "$COMPOSE_SERVICE" certify-reverse "$@"; }
+show_certificates() { compose exec "$COMPOSE_SERVICE" certify-reverse --show-certs; }
+check_updates() { compose exec "$COMPOSE_SERVICE" certify-reverse --check-updates; }
+rebuild_caddy() { compose exec "$COMPOSE_SERVICE" certify-reverse --rebuild-caddy; }
+print_caddyfile() { compose_caddyfile run --rm caddy; }
 
-# Show certificates
-show_certificates() {
-    log_info "Retrieving Caddy internal certificates..."
-    cd "$SCRIPT_DIR"
-    $DOCKER_COMPOSE exec $COMPOSE_SERVICE app --show-certs
-}
-
-# Force rebuild
-force_rebuild() {
-    log_info "Force rebuilding Caddy with DNS provider..."
-    cd "$SCRIPT_DIR"
-    $DOCKER_COMPOSE exec $COMPOSE_SERVICE app --force-build
-}
-
-# Show config
 show_config() {
-    log_info "Current configuration:"
-    cd "$SCRIPT_DIR"
-    echo
-    echo "=== config.yml ==="
-    cat config.yml 2>/dev/null || log_warn "config.yml not found"
-    echo
-    echo "=== Generated Files in /data ==="
-    $DOCKER_COMPOSE exec $COMPOSE_SERVICE sh -c "ls -la /data/ && echo && echo '=== Caddyfile Preview ===' && head -20 /data/Caddyfile 2>/dev/null || echo 'Caddyfile not found'" 2>/dev/null || log_warn "Could not access container files"
-    echo
-    echo "=== Container Status ==="
-    $DOCKER_COMPOSE ps
+  log_info "Runtime configuration"
+  echo "=== .env ==="
+  cat .env 2>/dev/null || log_warn ".env not found"
+  echo
+  echo "=== upstreams.yml ==="
+  cat upstreams.yml 2>/dev/null || log_warn "upstreams.yml not found"
+  echo
+  echo "=== Generated Files in /data ==="
+  compose exec "$COMPOSE_SERVICE" sh -c "ls -la /data/ && echo && echo '=== Caddyfile Preview ===' && head -40 /data/Caddyfile 2>/dev/null || echo 'Caddyfile not found'" || true
 }
 
-# Show status
 show_status() {
-    log_info "Container status:"
-    cd "$SCRIPT_DIR"
-    $DOCKER_COMPOSE ps
-    echo
-    log_info "Resource usage:"
-    $DOCKER_COMPOSE exec $COMPOSE_SERVICE sh -c "df -h /data && echo && free -h" 2>/dev/null || log_warn "Could not retrieve resource usage"
+  compose ps
+  echo
+  compose exec "$COMPOSE_SERVICE" sh -c "df -h /data && echo && free -h" || true
 }
 
-# Show data directory contents
 show_data() {
-    log_info "Contents of /data directory:"
-    cd "$SCRIPT_DIR"
-    $DOCKER_COMPOSE exec $COMPOSE_SERVICE sh -c "
-        echo 'Data Directory Structure:'
-        ls -la /data/
-        echo
-        echo 'Generated Caddyfile:'
-        cat /data/Caddyfile 2>/dev/null || echo 'Caddyfile not found'
-        echo
-        echo 'Generated dnsmasq.conf:'
-        cat /data/dnsmasq.conf 2>/dev/null || echo 'dnsmasq.conf not found'
-        echo
-        echo 'Recent Logs:'
-        tail -20 /data/logs/app.log 2>/dev/null || echo 'No logs found'
-    " 2>/dev/null || log_warn "Could not access container"
+  compose exec "$COMPOSE_SERVICE" sh -c "
+    echo 'Data Directory Structure:'
+    ls -la /data/
+    echo
+    echo 'Generated Caddyfile:'
+    cat /data/Caddyfile 2>/dev/null || echo 'Caddyfile not found'
+    echo
+    echo 'Generated dnsmasq.conf:'
+    cat /data/dnsmasq.conf 2>/dev/null || echo 'dnsmasq.conf not found'
+    echo
+    echo 'Generated index.html:'
+    head -40 /data/index.html 2>/dev/null || echo 'index.html not found'
+    echo
+    echo 'Recent Logs:'
+    tail -40 /data/logs/app.log 2>/dev/null || echo 'No logs found'
+  " || true
 }
 
-# Build images
 build_images() {
-    log_info "Building Docker images..."
-    cd "$SCRIPT_DIR"
-    $DOCKER_COMPOSE build --no-cache
-    log_success "Images built"
+  log_info "Building Docker image from docker/Dockerfile..."
+  compose build --no-cache
 }
 
-# Stop and remove everything
-down_services() {
-    log_info "Stopping and removing containers..."
-    cd "$SCRIPT_DIR"
-    $DOCKER_COMPOSE down
-    log_success "Containers removed"
-}
+down_services() { compose down; }
 
-# Clean everything
 clean_all() {
-    log_warn "This will remove containers, networks, and volumes. Are you sure? (y/N)"
-    read -r response
-    if [[ "$response" =~ ^[Yy]$ ]]; then
-        log_info "Cleaning up everything..."
-        cd "$SCRIPT_DIR"
-        $DOCKER_COMPOSE down -v --remove-orphans
-        docker system prune -f
-        log_success "Cleanup complete"
-    else
-        log_info "Cleanup cancelled"
-    fi
+  log_warn "This will remove containers, networks, and volumes. Continue? (y/N)"
+  read -r response
+  if [[ "$response" =~ ^[Yy]$ ]]; then
+    compose down -v --remove-orphans
+    docker system prune -f
+  fi
 }
 
-# Main script logic
+verify_project() {
+  cd "$SCRIPT_DIR"
+  python3 -m py_compile src/certify_reverse/cli.py src/certify_reverse/status_cli.py src/certify_reverse/templates.py
+  bash -n caddy-docker.sh
+  sh -n boot.sh
+  docker compose -f docker/docker-compose.yml config >/dev/null
+  docker compose -f docker/docker-compose.yml -f docker/docker-compose.caddyfile.yml config >/dev/null
+  log_success "Verification passed"
+}
+
+show_version() { project_version; }
+bump_patch() { cd "$SCRIPT_DIR"; python3 scripts/bump_version.py patch; }
+bump_minor() { cd "$SCRIPT_DIR"; python3 scripts/bump_version.py minor; }
+bump_major() { cd "$SCRIPT_DIR"; python3 scripts/bump_version.py major; }
+release_note() { echo "Release v$(project_version)"; }
+create_tag() {
+  cd "$SCRIPT_DIR"
+  local v="v$(project_version)"
+  git tag "$v"
+  log_success "Created tag $v"
+}
+
 main() {
-    check_docker_compose
-    
-    if [[ $# -eq 0 ]]; then
-        show_usage
-        exit 0
-    fi
-    
-    case "${1:-}" in
-        start)
-            start_services
-            ;;
-        stop)
-            stop_services
-            ;;
-        restart)
-            restart_services
-            ;;
-        logs)
-            shift
-            show_logs "$@"
-            ;;
-        shell)
-            open_shell
-            ;;
-        exec)
-            shift
-            exec_command "$@"
-            ;;
-        app)
-            shift
-            run_app "$@"
-            ;;
-        show-certs)
-            show_certificates
-            ;;
-        force-rebuild)
-            force_rebuild
-            ;;
-        config)
-            show_config
-            ;;
-        data)
-            show_data
-            ;;
-        status)
-            show_status
-            ;;
-        build)
-            build_images
-            ;;
-        down)
-            down_services
-            ;;
-        clean)
-            clean_all
-            ;;
-        help|--help|-h)
-            show_usage
-            ;;
-        *)
-            log_error "Unknown command: $1"
-            echo
-            show_usage
-            exit 1
-            ;;
-    esac
+  check_docker_compose
+  case "${1:-}" in
+    start) start_services ;;
+    stop) stop_services ;;
+    restart) restart_services ;;
+    logs) shift; show_logs "$@" ;;
+    shell) open_shell ;;
+    exec) shift; exec_command "$@" ;;
+    app) shift; run_app "$@" ;;
+    show-certs) show_certificates ;;
+    check-updates) check_updates ;;
+    rebuild-caddy|force-rebuild) rebuild_caddy ;;
+    print-caddyfile) print_caddyfile ;;
+    config) show_config ;;
+    data) show_data ;;
+    status) show_status ;;
+    build) build_images ;;
+    down) down_services ;;
+    clean) clean_all ;;
+    verify) verify_project ;;
+    version) show_version ;;
+    bump-patch) bump_patch ;;
+    bump-minor) bump_minor ;;
+    bump-major) bump_major ;;
+    release-note) release_note ;;
+    tag) create_tag ;;
+    help|--help|-h|"") show_usage ;;
+    *) log_error "Unknown command: $1"; show_usage; exit 1 ;;
+  esac
 }
 
-# Run main function with all arguments
 main "$@"

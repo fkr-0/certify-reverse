@@ -1,0 +1,30 @@
+services:
+  caddy:
+    image: caddy-reverse-certify:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    volumes:
+      - ../caddy-data:/data
+      - ../.env:/config/.env:ro
+      - ../upstreams.yml:/config/upstreams.yml:ro
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    cap_add:
+      - NET_BIND_SERVICE
+    ports:
+      - "80:80"
+      - "443:443"
+    entrypoint: ["/usr/local/bin/boot"]
+    restart: on-failure:3
+
+  dnsmasq:
+    image: andyshinn/dnsmasq:latest
+    container_name: dnsmasq
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+    volumes:
+      - ../caddy-data/dnsmasq.conf:/etc/dnsmasq.conf:ro
+    restart: unless-stopped
+    depends_on:
+      - caddy
