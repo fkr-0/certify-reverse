@@ -331,23 +331,16 @@ def print_certificates() -> None:
 
 
 def export_caddy_internal_certs() -> dict[str, str]:
-    if not CADDY.exists():
-        raise RuntimeError("Caddy binary not found")
-
-    cert_export_dir = DATADIR / "exported-certs"
-    cert_export_dir.mkdir(parents=True, exist_ok=True)
-    ca_cert_output = run([str(CADDY), "trust", "ca", "--format", "pem"])
-
-    ca_cert_path = cert_export_dir / "caddy-internal-ca.pem"
-    ca_cert_crt_path = cert_export_dir / "caddy-internal-ca.crt"
-    ca_cert_path.write_text(ca_cert_output, encoding="utf-8")
-    ca_cert_crt_path.write_text(ca_cert_output, encoding="utf-8")
-
-    log.info("Exported Caddy internal CA certs to %s", cert_export_dir)
+    cert_info = auto_export_internal_ca()
+    if not cert_info:
+        raise RuntimeError(
+            "Could not export internal CA certificate yet. Start Caddy once so PKI files are created."
+        )
+    log.info("Exported Caddy internal CA certs to %s", cert_info["export_dir"])
     return {
-        "ca_cert_pem": str(ca_cert_path),
-        "ca_cert_crt": str(ca_cert_crt_path),
-        "export_dir": str(cert_export_dir),
+        "ca_cert_pem": cert_info["ca_cert_pem"],
+        "ca_cert_crt": cert_info["ca_cert_crt"],
+        "export_dir": cert_info["export_dir"],
     }
 
 
@@ -540,7 +533,7 @@ def main(rebuild: bool = False, show_certs: bool = False, print_caddyfile: bool 
     log_if_changed(DNSMASQ, render_dnsmasq(cfg), "dnsmasq.conf")
 
     try:
-        run([str(CADDY), "trust", "--disable-tls-verification"])
+        run([str(CADDY), "trust"])
         log.info("Executed 'caddy trust' (may be a no-op in Docker)")
     except RuntimeError:
         log.warning("caddy trust failed – likely running as non-root")

@@ -404,7 +404,7 @@ def render_status_index_html(cfg: "ReverseProxyConfig", public_meta: dict) -> st
         const ms = Math.round(performance.now() - started);
         return `HTTP ${{r.status}} (~${{ms}}ms)`;
       }} catch (e) {{
-        return `unreachable (${e.message})`;
+        return `unreachable (${{e.message}})`;
       }}
     }}
 

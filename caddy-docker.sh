@@ -161,6 +161,7 @@ clean_all() {
 verify_project() {
   cd "$SCRIPT_DIR"
   python3 -m py_compile src/certify_reverse/cli.py src/certify_reverse/status_cli.py src/certify_reverse/templates.py
+  python3 -m unittest discover -s tests -p 'test_*.py'
   bash -n caddy-docker.sh
   sh -n boot.sh
   docker compose -f docker/docker-compose.yml config >/dev/null

@@ -4,6 +4,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      args:
+        CADDY_BUILDER_IMAGE: ${CADDY_BUILDER_IMAGE:-caddy:2.10.0-builder}
     volumes:
       - ../caddy-data:/data
       - ../.env:/config/.env:ro

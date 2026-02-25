@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Added
+
+- Configurable Docker builder base image via `.env`:
+  - `CADDY_BUILDER_IMAGE` (used as compose build arg for `docker/Dockerfile`).
+- Python test suite under `tests/` with:
+  - regression coverage for JS template escaping issues,
+  - config parsing/validation unit tests,
+  - CA export behavior tests.
+- Container-level integration test (`tests/test_integration_compose.py`) that runs Compose-based Caddyfile generation and auto-skips when Docker Compose is unavailable.
+- `caddy-docker.sh verify` now runs unittest discovery (including integration tests with skip semantics) in addition to syntax/compose validation.
+
+### Changed
+
+- `caddy-docker.sh verify` now runs unittest discovery (including integration tests with skip semantics) in addition to syntax/compose validation.
+- Improved compatibility with Caddy command variants by removing unsupported trust/export flags and using internal PKI-file export logic.
+- Fixed dashboard template JS interpolation escaping that could crash runtime HTML generation.
+
 ## [0.3.5] - 2026-02-25
 
 ### Added

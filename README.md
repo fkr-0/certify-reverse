@@ -117,6 +117,12 @@ CADDY_VERSION=latest
 CADDY_VERSION=v2.10.2
 ```
 
+- Optionally set Docker builder base image for `./caddy-docker.sh build`:
+
+```env
+CADDY_BUILDER_IMAGE=caddy:2.10.0-builder
+```
+
 - Check update recommendation:
 
 ```bash

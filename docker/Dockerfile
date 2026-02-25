@@ -1,4 +1,5 @@
-FROM caddy:2.10.0-builder
+ARG CADDY_BUILDER_IMAGE=caddy:2.10.0-builder
+FROM ${CADDY_BUILDER_IMAGE}
 
 RUN apk add --no-cache \
   dnsmasq \
