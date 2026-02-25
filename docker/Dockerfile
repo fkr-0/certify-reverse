@@ -1,14 +1,16 @@
 ARG CADDY_BUILDER_IMAGE=caddy:2.10.0-builder
+
+FROM golang:alpine AS golang_toolchain
+
 FROM ${CADDY_BUILDER_IMAGE}
 
 RUN apk add --no-cache \
-  dnsmasq \
-  openssh-client rsync \
-  go \
-  curl jq git \
-  python3 py3-pip py3-yaml py3-rich \
-  logrotate tzdata \
-  su-exec libcap openssl
+  ca-certificates \
+  python3 \
+  py3-pip
+
+COPY --from=golang_toolchain /usr/local/go /usr/local/go
+ENV PATH="/usr/local/go/bin:${PATH}"
 
 WORKDIR /opt/certify-reverse
 COPY pyproject.toml README.md ./

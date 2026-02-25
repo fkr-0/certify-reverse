@@ -32,18 +32,6 @@ def render_caddy(cfg: 'ReverseProxyConfig') -> str:
         acme_dns {cfg.dns_provider} {{
             token {cfg.dns_token}
         }}
-        
-        # Internal CA for issuing certificates to internal services
-        pki {{
-            ca internal {{
-                name "Caddy Internal CA"
-                root_cn "Caddy Internal Root CA"
-                intermediate_cn "Caddy Internal Intermediate CA"
-                root_ca_ttl 24h * 365 * 25  # 25 years
-                intermediate_ca_ttl 24h * 365 * 5  # 5 years
-                # Monitor expiration: caddy pki ca list
-            }}
-        }}
     }}
     """
     ).strip()
@@ -55,6 +43,10 @@ def render_caddy(cfg: 'ReverseProxyConfig') -> str:
         f"status.{cfg.domain} " + "{",
         "    header /probe/* Access-Control-Allow-Origin *",
         "    header /acme-state.json Access-Control-Allow-Origin *",
+        "    header /crtsh-state.json Access-Control-Allow-Origin *",
+        "    handle_path /probe/crtsh {",
+        "        reverse_proxy https://crt.sh",
+        "    }",
     ]
     for upstream in cfg.upstreams:
         status_lines.append(f"    handle_path /probe/{upstream.subdomain}/* " + "{")
@@ -62,7 +54,6 @@ def render_caddy(cfg: 'ReverseProxyConfig') -> str:
             f"        reverse_proxy {upstream.scheme}://{upstream.ip}:{upstream.port} " + "{"
         )
         if upstream.forward_auth_headers:
-            status_lines.append("            header_up X-Forwarded-Host {host}")
             status_lines.append("            header_up X-Real-IP {remote}")
         if upstream.is_https:
             transport_config = _render_transport_config(upstream)
@@ -124,7 +115,6 @@ def _render_upstream_block(upstream: 'Upstream', domain: str) -> str:
     
     # Forward authentication headers if enabled
     if upstream.forward_auth_headers:
-        block.append("        header_up X-Forwarded-Host {host}")
         block.append("        header_up X-Real-IP {remote}")
     
     # Handle HTTPS transport configuration
@@ -154,13 +144,14 @@ def _render_transport_config(upstream: 'Upstream') -> str:
 
 def render_dnsmasq(cfg: 'ReverseProxyConfig') -> str:
     """Render dnsmasq configuration from ReverseProxyConfig."""
-    # Wildcard domain -> proxy host (assumed 10.0.0.1, change as needed)
+    # Wildcard domain -> reverse-proxy host IP
+    target_ip = getattr(cfg, "dnsmasq_address_ip", "10.0.0.1")
     return textwrap.dedent(
         f"""
     no-resolv
     log-queries
-    log-facility=/var/log/dnsmasq.log
-    address=/.{cfg.domain}/10.0.0.1
+    log-facility=/data/logs/dnsmasq.log
+    address=/.{cfg.domain}/{target_ip}
     """
     ).lstrip()
 
@@ -345,14 +336,52 @@ def render_status_index_html(cfg: "ReverseProxyConfig", public_meta: dict) -> st
     }}
     .status-ok {{ color: var(--ok); font-weight: 600; }}
     .status-bad {{ color: var(--bad); font-weight: 600; }}
+    .status-unknown {{ color: var(--muted); font-weight: 600; }}
     .note {{ color: var(--muted); font-size: 12px; }}
+    .scroll-x {{ overflow-x: auto; }}
+    .toolbar {{ display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }}
+    .kv p {{ margin: 4px 0; }}
+    .cell-action {{ display: inline-flex; gap: 6px; align-items: center; }}
+    .btn-inline {{
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 1px 6px;
+      cursor: pointer;
+      font-size: 12px;
+      line-height: 1.2;
+    }}
+    .spinner {{
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--line);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      display: inline-block;
+      vertical-align: middle;
+      margin-right: 8px;
+    }}
+    @keyframes spin {{
+      from {{ transform: rotate(0deg); }}
+      to {{ transform: rotate(360deg); }}
+    }}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
-      <h1>certify-reverse Dashboard</h1>
+      <h1 id="title">certify-reverse Dashboard</h1>
       <div class="meta" id="meta"></div>
+    </div>
+    <div class="card">
+      <h2>crt.sh Status <span id="crtsh-domain"></span></h2>
+      <p class="note" id="crtsh-loading"><span class="spinner"></span>Querying crt.sh status...</p>
+      <div class="toolbar">
+        <button class="btn" id="crtsh-refresh-status">↻ Refresh</button>
+      </div>
+      <div class="kv" id="crtsh-status"></div>
     </div>
     <div class="card">
       <h2>Services</h2>
@@ -362,8 +391,8 @@ def render_status_index_html(cfg: "ReverseProxyConfig", public_meta: dict) -> st
             <th>Service</th>
             <th>Public URL</th>
             <th>Upstream Target</th>
-            <th>Status</th>
-            <th>Actions</th>
+            <th>Ping</th>
+            <th>Cert</th>
           </tr>
         </thead>
         <tbody id="svc-body"></tbody>
@@ -373,6 +402,20 @@ def render_status_index_html(cfg: "ReverseProxyConfig", public_meta: dict) -> st
     <div class="card">
       <h2>ACME State</h2>
       <pre id="acme-state">loading...</pre>
+    </div>
+    <div class="card">
+      <h2>crt.sh Certificate History</h2>
+      <p class="note" id="crtsh-summary">loading...</p>
+      <div class="toolbar">
+        <button class="btn" id="crtsh-refresh-local">Refresh Local Snapshot</button>
+        <button class="btn" id="crtsh-refresh-live">Refresh Live (via /probe/crtsh)</button>
+      </div>
+      <div class="scroll-x">
+        <table>
+          <thead id="crtsh-head"></thead>
+          <tbody id="crtsh-body"></tbody>
+        </table>
+      </div>
     </div>
   </div>
   <script>
@@ -384,8 +427,13 @@ def render_status_index_html(cfg: "ReverseProxyConfig", public_meta: dict) -> st
     }}
 
     function setMeta() {{
+      const t = document.getElementById('title');
+      const appVer = meta.certify_reverse_version || 'unknown';
+      t.textContent = `certify-reverse v${{appVer}} Dashboard`;
       const el = document.getElementById('meta');
       el.innerHTML = `
+        <p><strong>certify-reverse version:</strong> ${{esc(meta.certify_reverse_version || 'unknown')}}</p>
+        <p><strong>certify-reverse commit:</strong> ${{esc(meta.certify_reverse_commit || 'unknown')}}</p>
         <p><strong>Domain:</strong> ${{esc(meta.domain)}}</p>
         <p><strong>Email:</strong> ${{esc(meta.email)}}</p>
         <p><strong>DNS Provider:</strong> ${{esc(meta.dns_provider)}}</p>
@@ -423,11 +471,8 @@ def render_status_index_html(cfg: "ReverseProxyConfig", public_meta: dict) -> st
         <td>${{esc(svc.name)}}</td>
         <td><a href="${{esc(svc.url)}}" target="_blank" rel="noreferrer">${{esc(svc.url)}}</a></td>
         <td>${{esc(svc.target)}}</td>
-        <td id="st-${{esc(svc.name)}}">unknown</td>
-        <td>
-          <button class="btn" id="ping-${{esc(svc.name)}}">Ping</button>
-          <button class="btn" id="cert-${{esc(svc.name)}}">Check Cert</button>
-        </td>
+        <td><span class="cell-action"><span id="ping-res-${{esc(svc.name)}}" class="note">checking...</span><button class="btn-inline" id="ping-refresh-${{esc(svc.name)}}" title="Refresh ping">↻</button></span></td>
+        <td><span class="cell-action"><span id="cert-res-${{esc(svc.name)}}" class="note">checking...</span><button class="btn-inline" id="cert-refresh-${{esc(svc.name)}}" title="Refresh cert check">↻</button></span></td>
       `;
       return tr;
     }}
@@ -443,23 +488,184 @@ def render_status_index_html(cfg: "ReverseProxyConfig", public_meta: dict) -> st
       }}
     }}
 
+    function renderCrtShEntries(entries, summaryText) {{
+      const summary = document.getElementById('crtsh-summary');
+      const head = document.getElementById('crtsh-head');
+      const body = document.getElementById('crtsh-body');
+      summary.textContent = summaryText;
+      const rows = Array.isArray(entries) ? entries : [];
+      if (rows.length === 0) {{
+        head.innerHTML = '';
+        body.innerHTML = '';
+        return;
+      }}
+      const colSet = new Set();
+      rows.forEach(row => Object.keys(row || {{}}).forEach(k => colSet.add(k)));
+      const cols = Array.from(colSet);
+      const trh = document.createElement('tr');
+      cols.forEach((c) => {{
+        const th = document.createElement('th');
+        th.textContent = c;
+        trh.appendChild(th);
+      }});
+      head.innerHTML = '';
+      head.appendChild(trh);
+
+      body.innerHTML = '';
+      rows.forEach((row) => {{
+        const tr = document.createElement('tr');
+        cols.forEach((c) => {{
+          const td = document.createElement('td');
+          const v = row && row[c] != null ? String(row[c]) : '';
+          td.textContent = v.replace(/\\n/g, ' | ');
+          tr.appendChild(td);
+        }});
+        body.appendChild(tr);
+      }});
+    }}
+
+    function parseDate(s) {{
+      if (!s) return null;
+      const d = new Date(String(s).replace(' ', 'T') + (String(s).includes('T') ? 'Z' : 'T00:00:00Z'));
+      return Number.isNaN(d.getTime()) ? null : d;
+    }}
+
+    function setCrtShStatusLoading(show, text='') {{
+      const loading = document.getElementById('crtsh-loading');
+      if (show) {{
+        loading.style.display = 'block';
+        loading.innerHTML = `<span class="spinner"></span>${{esc(text || 'Querying crt.sh status...')}}`;
+      }} else {{
+        loading.style.display = 'none';
+      }}
+    }}
+
+    function renderCrtShStatusFromSnapshot(snapshot) {{
+      const el = document.getElementById('crtsh-status');
+      const domainEl = document.getElementById('crtsh-domain');
+      const latest = snapshot && snapshot.latest ? snapshot.latest : {{}};
+      const cn = latest.common_name || latest.name_value || 'n/a';
+      const validSince = latest.not_before || 'n/a';
+      const validUntil = latest.not_after || 'n/a';
+      const validity = snapshot.latest_validity || 'unknown';
+      const validityClass = validity === 'valid' ? 'status-ok' : (validity.includes('expired') || validity.includes('error') ? 'status-bad' : 'status-unknown');
+      const count = snapshot.match_count != null ? snapshot.match_count : (Array.isArray(snapshot.entries) ? snapshot.entries.length : 0);
+      const generatedAt = snapshot.generated_at || 'n/a';
+      const lastQueried = snapshot.last_queried || generatedAt;
+      domainEl.textContent = snapshot.domain ? `(${{snapshot.domain}})` : '';
+      el.innerHTML = `
+        <p><strong>Common Name:</strong> ${{esc(cn)}}</p>
+        <p><strong>Latest Generated At:</strong> ${{esc(generatedAt)}}</p>
+        <p><strong>Latest Valid Since:</strong> ${{esc(validSince)}}</p>
+        <p><strong>Latest Valid Until:</strong> ${{esc(validUntil)}}</p>
+        <p><strong>Certificate Validity:</strong> <span class="${{validityClass}}">${{esc(validity)}}</span></p>
+        <p><strong>Number of Results:</strong> ${{esc(count)}}</p>
+        <p><strong>Last Queried:</strong> ${{esc(lastQueried)}}</p>
+      `;
+    }}
+
+    async function loadCrtShState() {{
+      setCrtShStatusLoading(true, 'Querying crt.sh status...');
+      try {{
+        const r = await fetch('/crtsh-state.json', {{ cache: 'no-store' }});
+        const j = await r.json();
+        if (j.error) {{
+          setCrtShStatusLoading(false);
+          renderCrtShStatusFromSnapshot({{
+            domain: j.domain || meta.domain,
+            generated_at: j.generated_at || 'n/a',
+            latest_validity: 'error',
+            match_count: 0,
+            latest: {{ common_name: 'n/a', not_before: 'n/a', not_after: 'n/a' }},
+          }});
+          renderCrtShEntries([], `crt.sh query failed: ${{j.error}}`);
+          return;
+        }}
+        const entries = Array.isArray(j.entries) ? j.entries : [];
+        setCrtShStatusLoading(false);
+        renderCrtShStatusFromSnapshot({{ ...j, last_queried: new Date().toISOString() }});
+        renderCrtShEntries(
+          entries,
+          `domain=${{j.domain || meta.domain}}, matches=${{entries.length}}, latest_validity=${{j.latest_validity || 'unknown'}}`,
+        );
+      }} catch (e) {{
+        setCrtShStatusLoading(false);
+        renderCrtShStatusFromSnapshot({{
+          domain: meta.domain,
+          generated_at: 'n/a',
+          latest_validity: 'error',
+          match_count: 0,
+          latest: {{ common_name: 'n/a', not_before: 'n/a', not_after: 'n/a' }},
+        }});
+        renderCrtShEntries([], `crt.sh state unavailable: ${{e.message}}`);
+      }}
+    }}
+
+    async function loadCrtShLive() {{
+      setCrtShStatusLoading(true, 'Querying live crt.sh via Caddy endpoint...');
+      try {{
+        const q = encodeURIComponent(meta.domain);
+        const r = await fetch(`/probe/crtsh?q=${{q}}&output=json`, {{ cache: 'no-store' }});
+        const entries = await r.json();
+        const rows = Array.isArray(entries) ? entries : [];
+        let latest = null;
+        rows.forEach((row) => {{
+          if (!latest) {{
+            latest = row;
+            return;
+          }}
+          const a = parseDate(row.not_after) || parseDate(row.entry_timestamp);
+          const b = parseDate(latest.not_after) || parseDate(latest.entry_timestamp);
+          if (a && b && a > b) latest = row;
+        }});
+        const now = new Date();
+        const nb = latest ? parseDate(latest.not_before) : null;
+        const na = latest ? parseDate(latest.not_after) : null;
+        let validity = 'unknown';
+        if (nb && na) validity = (nb <= now && now <= na) ? 'valid' : 'expired/not-yet-valid';
+        else if (na) validity = now <= na ? 'valid' : 'expired';
+        setCrtShStatusLoading(false);
+        renderCrtShStatusFromSnapshot({{
+          domain: meta.domain,
+          generated_at: new Date().toISOString(),
+          last_queried: new Date().toISOString(),
+          latest_validity: validity,
+          match_count: rows.length,
+          latest: latest || {{ common_name: 'n/a', not_before: 'n/a', not_after: 'n/a' }},
+        }});
+        renderCrtShEntries(rows, `live crt.sh result for ${{meta.domain}} matches=${{rows.length}}`);
+      }} catch (e) {{
+        setCrtShStatusLoading(false);
+        renderCrtShEntries([], `live crt.sh probe failed: ${{e.message}}`);
+      }}
+    }}
+
+    async function refreshServicePing(svc) {{
+      const el = document.getElementById(`ping-res-${{svc.name}}`);
+      el.textContent = 'checking...';
+      el.className = 'note';
+      const res = await ping(svc.probe_url);
+      const ok = res.startsWith('HTTP');
+      el.textContent = res;
+      el.className = ok ? 'status-ok' : 'status-bad';
+    }}
+
+    async function refreshServiceCert(svc) {{
+      const el = document.getElementById(`cert-res-${{svc.name}}`);
+      el.textContent = 'checking...';
+      el.className = 'note';
+      const res = await certCheck(svc.probe_url);
+      const ok = res.includes('reachable');
+      el.textContent = res;
+      el.className = ok ? 'status-ok' : 'status-bad';
+    }}
+
     function bindActions() {{
       services.forEach((svc) => {{
-        const st = document.getElementById(`st-${{svc.name}}`);
-        document.getElementById(`ping-${{svc.name}}`).addEventListener('click', async () => {{
-          st.textContent = 'checking...';
-          const res = await ping(svc.probe_url);
-          const ok = res.startsWith('HTTP');
-          st.textContent = res;
-          st.className = ok ? 'status-ok' : 'status-bad';
-        }});
-        document.getElementById(`cert-${{svc.name}}`).addEventListener('click', async () => {{
-          st.textContent = 'checking tls...';
-          const res = await certCheck(svc.probe_url);
-          const ok = res.includes('reachable');
-          st.textContent = res;
-          st.className = ok ? 'status-ok' : 'status-bad';
-        }});
+        document.getElementById(`ping-refresh-${{svc.name}}`).addEventListener('click', () => refreshServicePing(svc));
+        document.getElementById(`cert-refresh-${{svc.name}}`).addEventListener('click', () => refreshServiceCert(svc));
+        refreshServicePing(svc);
+        refreshServiceCert(svc);
       }});
     }}
 
@@ -468,7 +674,11 @@ def render_status_index_html(cfg: "ReverseProxyConfig", public_meta: dict) -> st
       const body = document.getElementById('svc-body');
       services.forEach(svc => body.appendChild(rowForService(svc)));
       bindActions();
+      document.getElementById('crtsh-refresh-status').addEventListener('click', loadCrtShLive);
+      document.getElementById('crtsh-refresh-local').addEventListener('click', loadCrtShState);
+      document.getElementById('crtsh-refresh-live').addEventListener('click', loadCrtShLive);
       loadAcmeState();
+      loadCrtShState();
     }}
 
     init();

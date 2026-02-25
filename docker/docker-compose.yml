@@ -10,6 +10,9 @@ services:
       - ../caddy-data:/data
       - ../.env:/config/.env:ro
       - ../upstreams.yml:/config/upstreams.yml:ro
+    environment:
+      HOST_DNSMASQ_ADDRESS_IP: ${HOST_DNSMASQ_ADDRESS_IP:-}
+      CERTIFY_REVERSE_COMMIT: ${CERTIFY_REVERSE_COMMIT:-unknown}
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     cap_add:
       - NET_BIND_SERVICE
@@ -22,11 +25,17 @@ services:
   dnsmasq:
     image: andyshinn/dnsmasq:latest
     container_name: dnsmasq
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - mkdir -p /data/logs; exec dnsmasq -k --conf-file=/data/dnsmasq.conf $${DNSMASQ_EXTRA_ARGS}
     ports:
       - "53:53/udp"
       - "53:53/tcp"
+    environment:
+      DNSMASQ_EXTRA_ARGS: ${DNSMASQ_EXTRA_ARGS:-}
     volumes:
-      - ../caddy-data/dnsmasq.conf:/etc/dnsmasq.conf:ro
+      - ../caddy-data:/data
     restart: unless-stopped
     depends_on:
       - caddy

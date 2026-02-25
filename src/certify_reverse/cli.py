@@ -11,19 +11,23 @@ from __future__ import annotations
 import argparse
 import difflib
 import importlib
+import importlib.metadata
 import json
 import logging
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
+from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
 
 import yaml
@@ -49,16 +53,32 @@ CFILE_OVERWRITE = DATADIR / "Caddyfile.overwrite"
 DNSMASQ = DATADIR / "dnsmasq.conf"
 INDEX_HTML = DATADIR / "index.html"
 ACME_STATE_JSON = DATADIR / "acme-state.json"
+CRTSH_STATE_JSON = DATADIR / "crtsh-state.json"
 LOGDIR = DATADIR / "logs"
 
 LOGFMT = "%(asctime)s [%(levelname)s] %(message)s"
 log = logging.getLogger("bootstrap")
 log.setLevel(logging.DEBUG)
 _LOG_CONFIGURED = False
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_C_HL = "\033[96m"
+_C_OK = "\033[92m"
+_C_WARN = "\033[93m"
+_C_RESET = "\033[0m"
+
+
+class StripAnsiFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        s = super().format(record)
+        return _ANSI_RE.sub("", s)
 
 
 class InvalidSetupError(Exception):
     """Raised when required configuration is missing or malformed."""
+
+
+def hl(value: Any) -> str:
+    return f"{_C_HL}{value}{_C_RESET}"
 
 
 def configure_logging() -> None:
@@ -75,7 +95,7 @@ def configure_logging() -> None:
 
     if file_logging_ready:
         rot = RotatingFileHandler(LOGDIR / "app.log", maxBytes=100_000, backupCount=5)
-        rot.setFormatter(logging.Formatter(LOGFMT))
+        rot.setFormatter(StripAnsiFormatter(LOGFMT))
         log.addHandler(rot)
 
     console = logging.StreamHandler(sys.stdout)
@@ -113,6 +133,8 @@ class ReverseProxyConfig:
     email: str
     domain: str
     caddy_version: str = "latest"
+    dnsmasq_address_mode: str = "manual"
+    dnsmasq_address_ip: str = "10.0.0.1"
     upstreams: list[Upstream] = field(default_factory=list)
 
     @classmethod
@@ -124,6 +146,13 @@ class ReverseProxyConfig:
         email = os.getenv("ACME_EMAIL", "admin@example.com")
         domain = must_env("DOMAIN")
         caddy_version = os.getenv("CADDY_VERSION", "latest").strip() or "latest"
+        dnsmasq_address_mode = env_first(
+            "DNSMASQ_ADDRESS_MODE",
+            "dnsmasq_address_mode",
+            default="manual",
+        ).lower()
+        manual_dnsmasq_ip = env_first("DNSMASQ_ADDRESS_IP", "dnsmasq_address_ip", default="10.0.0.1")
+        dnsmasq_address_ip = derive_dnsmasq_address_ip(dnsmasq_address_mode, manual_dnsmasq_ip)
 
         upstreams = load_upstreams(UPSTREAMS_FILE)
         return cls(
@@ -132,6 +161,8 @@ class ReverseProxyConfig:
             email=email,
             domain=domain,
             caddy_version=caddy_version,
+            dnsmasq_address_mode=dnsmasq_address_mode,
+            dnsmasq_address_ip=dnsmasq_address_ip,
             upstreams=upstreams,
         )
 
@@ -154,6 +185,85 @@ def must_env(name: str) -> str:
     return v
 
 
+def env_first(*names: str, default: str = "") -> str:
+    for name in names:
+        v = os.getenv(name)
+        if v is not None and v.strip():
+            return v.strip()
+    return default
+
+
+def is_ipv4(value: str) -> bool:
+    return bool(re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", value))
+
+
+def resolve_hostname_ipv4(name: str) -> str | None:
+    try:
+        return socket.gethostbyname(name)
+    except Exception:
+        return None
+
+
+def _extract_src_ip_from_route(route_output: str) -> str | None:
+    m = re.search(r"\bsrc\s+(\d+\.\d+\.\d+\.\d+)\b", route_output)
+    return m.group(1) if m else None
+
+
+def derive_dnsmasq_address_ip(mode: str, manual_ip: str) -> str:
+    host_derived = env_first("HOST_DNSMASQ_ADDRESS_IP", default="")
+    if mode in {"host-src-ip", "auto"} and host_derived and is_ipv4(host_derived):
+        log.info(
+            "dnsmasq address mode=%s using host-derived src IP=%s",
+            hl(mode),
+            hl(host_derived),
+        )
+        return host_derived
+
+    if manual_ip and not is_ipv4(manual_ip):
+        resolved = resolve_hostname_ipv4(manual_ip)
+        if resolved:
+            log.info(
+                "Resolved DNSMASQ_ADDRESS_IP hostname %s -> %s",
+                hl(manual_ip),
+                hl(resolved),
+            )
+            manual_ip = resolved
+
+    if mode not in {"manual", "host-src-ip", "auto"}:
+        log.warning("Unknown DNSMASQ_ADDRESS_MODE=%s; falling back to manual", hl(mode))
+        return manual_ip
+    if mode == "manual":
+        log.info("dnsmasq address mode=%s target=%s", hl(mode), hl(manual_ip))
+        return manual_ip
+
+    try:
+        route = subprocess.check_output(
+            ["ip", "-4", "route", "get", "1.1.1.1"],
+            text=True,
+            stderr=subprocess.STDOUT,
+        )
+        detected = _extract_src_ip_from_route(route)
+        if detected:
+            log.info(
+                "dnsmasq address mode=%s detected host src IP=%s",
+                hl(mode),
+                hl(detected),
+            )
+            return detected
+        log.warning(
+            "Could not parse src IP from 'ip route get' output; using manual DNSMASQ_ADDRESS_IP=%s",
+            hl(manual_ip),
+        )
+    except Exception as e:
+        log.warning(
+            "Failed to derive host src IP (%s); using manual DNSMASQ_ADDRESS_IP=%s",
+            e,
+            hl(manual_ip),
+        )
+    log.info("dnsmasq address mode=%s fallback target=%s", hl(mode), hl(manual_ip))
+    return manual_ip
+
+
 def load_env_file(path: Path) -> None:
     if not path.exists():
         log.warning("%s not found; relying on process environment", path)
@@ -166,7 +276,9 @@ def load_env_file(path: Path) -> None:
         k, v = line.split("=", 1)
         k = k.strip()
         v = v.strip().strip('"').strip("'")
-        os.environ.setdefault(k, v)
+        # File-based runtime config is authoritative for this app and must
+        # override inherited image/base environment defaults.
+        os.environ[k] = v
 
 
 def load_upstreams(path: Path) -> list[Upstream]:
@@ -245,6 +357,17 @@ def check_caddy_update_status() -> dict[str, Any]:
     }
 
 
+def get_app_version() -> str:
+    try:
+        return importlib.metadata.version("certify-reverse")
+    except Exception:
+        return "unknown"
+
+
+def get_app_commit() -> str:
+    return env_first("CERTIFY_REVERSE_COMMIT", "APP_COMMIT", default="unknown")
+
+
 def caddy_has_plugin(provider: str) -> bool:
     if not CADDY.exists():
         return False
@@ -253,12 +376,32 @@ def caddy_has_plugin(provider: str) -> bool:
 
 
 def build_caddy(dns_provider: str, caddy_version: str = "latest") -> None:
-    log.info("Building Caddy version '%s' with dns.providers.%s", caddy_version, dns_provider)
-    if CADDY.exists():
-        log.info("Removing existing Caddy binary at %s", CADDY)
-        CADDY.unlink()
+    log.info(
+        "Building Caddy version %s with dns.providers.%s",
+        hl(caddy_version),
+        hl(dns_provider),
+    )
+    cache_root = WORK / ".cache"
+    go_build_cache = cache_root / "go-build"
+    go_mod_cache = cache_root / "go-mod"
+    go_tmp = WORK / ".tmp"
+    for d in (WORK, cache_root, go_build_cache, go_mod_cache, go_tmp):
+        d.mkdir(parents=True, exist_ok=True)
+
+    tmp_output = WORK / "caddy-rebuild.new"
+    if tmp_output.exists():
+        tmp_output.unlink()
+
     env = os.environ.copy()
-    env.setdefault("GOTOOLCHAIN", "auto")
+    env["GOTOOLCHAIN"] = "auto"
+    # Containers already grant NET_BIND_SERVICE at runtime; avoid xcaddy setcap
+    # attempts that require CAP_SETFCAP during non-root rebuilds.
+    env["XCADDY_SETCAP"] = "0"
+    env["HOME"] = str(WORK)
+    env["XDG_CACHE_HOME"] = str(cache_root)
+    env["GOCACHE"] = str(go_build_cache)
+    env["GOMODCACHE"] = str(go_mod_cache)
+    env["TMPDIR"] = str(go_tmp)
     run(
         [
             "xcaddy",
@@ -267,11 +410,15 @@ def build_caddy(dns_provider: str, caddy_version: str = "latest") -> None:
             "--with",
             f"github.com/caddy-dns/{dns_provider}",
             "--output",
-            str(CADDY),
+            str(tmp_output),
         ],
         env=env,
         cwd=WORK,
     )
+    if not tmp_output.exists():
+        raise RuntimeError(f"xcaddy did not produce output binary: {tmp_output}")
+    tmp_output.replace(CADDY)
+    log.info("Installed rebuilt Caddy binary at %s", hl(CADDY))
 
 
 def log_if_changed(path: Path, new_content: str, title: str) -> None:
@@ -280,7 +427,7 @@ def log_if_changed(path: Path, new_content: str, title: str) -> None:
         old_content = path.read_text(encoding="utf-8")
 
     if old_content == new_content:
-        log.info("%s unchanged → %s", title, path)
+        log.info("%s unchanged -> %s", title, hl(path))
         return
 
     if old_content:
@@ -295,9 +442,152 @@ def log_if_changed(path: Path, new_content: str, title: str) -> None:
         for line in diff:
             log.info("DIFF %s", line)
     else:
-        log.info("%s created → %s", title, path)
+        log.info("%s created -> %s", title, hl(path))
 
     path.write_text(new_content, encoding="utf-8")
+
+
+def format_caddyfile_content(content: str) -> str:
+    """Format Caddyfile text using `caddy fmt` when available."""
+    if not CADDY.exists():
+        return content
+    try:
+        p = subprocess.run(
+            [str(CADDY), "fmt"],
+            input=content,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        return content
+
+    if p.returncode == 0 and p.stdout.strip():
+        return p.stdout
+    return content
+
+
+def format_caddyfile_in_place(path: Path) -> None:
+    """Format a written Caddyfile on disk to silence runtime adapter warnings."""
+    if not CADDY.exists() or not path.exists():
+        return
+    try:
+        p = subprocess.run(
+            [str(CADDY), "fmt", "--overwrite", str(path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if p.returncode == 0:
+            log.debug("Formatted Caddyfile in place: %s", hl(path))
+    except Exception:
+        pass
+
+
+def prepare_caddy_runtime_env() -> None:
+    """Set writable runtime dirs so non-root Caddy doesn't use '/.config' or '/.local'."""
+    home = DATADIR
+    xdg_config = DATADIR / ".config"
+    xdg_data = DATADIR / ".local" / "share"
+    xdg_cache = DATADIR / ".cache"
+    for d in (home, xdg_config, xdg_data, xdg_cache):
+        d.mkdir(parents=True, exist_ok=True)
+    os.environ["HOME"] = str(home)
+    os.environ["XDG_CONFIG_HOME"] = str(xdg_config)
+    os.environ["XDG_DATA_HOME"] = str(xdg_data)
+    os.environ["XDG_CACHE_HOME"] = str(xdg_cache)
+
+
+def _parse_crtsh_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    value = value.strip()
+    formats = (
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+    )
+    for fmt in formats:
+        try:
+            return datetime.strptime(value, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def _crtsh_latest(entries: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, str]:
+    if not entries:
+        return None, "none"
+    latest: dict[str, Any] | None = None
+    latest_dt: datetime | None = None
+    for row in entries:
+        not_after = _parse_crtsh_time(str(row.get("not_after", "")).strip())
+        entry_ts = _parse_crtsh_time(str(row.get("entry_timestamp", "")).strip())
+        candidate = not_after or entry_ts
+        if candidate is None:
+            continue
+        if latest_dt is None or candidate > latest_dt:
+            latest_dt = candidate
+            latest = row
+    if latest is None:
+        return entries[0], "unknown"
+
+    now = datetime.now(timezone.utc)
+    nb = _parse_crtsh_time(str(latest.get("not_before", "")).strip())
+    na = _parse_crtsh_time(str(latest.get("not_after", "")).strip())
+    if nb and na:
+        validity = "valid" if nb <= now <= na else "expired/not-yet-valid"
+    elif na:
+        validity = "valid" if now <= na else "expired"
+    else:
+        validity = "unknown"
+    return latest, validity
+
+
+def fetch_crtsh_state(domain: str) -> dict[str, Any]:
+    url = f"https://crt.sh/?q={quote_plus(domain)}&output=json"
+    req = Request(url, headers={"User-Agent": "certify-reverse"})
+    with urlopen(req, timeout=15) as r:
+        payload = r.read().decode("utf-8")
+    entries = json.loads(payload) if payload.strip() else []
+    if not isinstance(entries, list):
+        entries = []
+
+    latest, validity = _crtsh_latest(entries)
+    state: dict[str, Any] = {
+        "domain": domain,
+        "source_url": url,
+        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "match_count": len(entries),
+        "latest": latest,
+        "latest_validity": validity,
+        "entries": entries,
+    }
+
+    latest_id = latest.get("id") if isinstance(latest, dict) else "n/a"
+    latest_not_after = latest.get("not_after") if isinstance(latest, dict) else "n/a"
+    log.info(
+        "crt.sh domain=%s matches=%s latest_id=%s latest_not_after=%s validity=%s",
+        hl(domain),
+        hl(len(entries)),
+        hl(latest_id),
+        hl(latest_not_after),
+        hl(validity),
+    )
+    return state
+
+
+def write_status_json(path: Path, payload: dict[str, Any], title: str) -> None:
+    new_content = json.dumps(payload, indent=2, sort_keys=True)
+    old_content = path.read_text(encoding="utf-8") if path.exists() else ""
+    if new_content == old_content:
+        log.info("%s unchanged -> %s", title, hl(path))
+        return
+    path.write_text(new_content, encoding="utf-8")
+    log.info("%s updated -> %s", title, hl(path))
 
 
 def get_caddy_certificates() -> dict[str, Any]:
@@ -469,6 +759,8 @@ def run_extensions(cfg: ReverseProxyConfig) -> None:
 def write_status_assets(cfg: ReverseProxyConfig) -> None:
     update_info = check_caddy_update_status()
     public_meta = {
+        "certify_reverse_version": get_app_version(),
+        "certify_reverse_commit": get_app_commit(),
         "domain": cfg.domain,
         "email": cfg.email,
         "dns_provider": cfg.dns_provider,
@@ -479,30 +771,52 @@ def write_status_assets(cfg: ReverseProxyConfig) -> None:
         "caddy_native_upgrade_supported": update_info.get("native_upgrade_supported"),
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
+    rec = update_info.get("recommended")
+    rec_text = "update recommended" if rec else "up-to-date/unknown"
+    log.info(
+        "Caddy versions: built=%s latest=%s recommendation=%s",
+        hl(update_info.get("built", "unknown")),
+        hl(update_info.get("latest", "unknown")),
+        hl(rec_text),
+    )
     acme_state = {
         "state": "unknown",
         "note": "Runtime ACME challenge status is not directly exposed to browser clients.",
         "subjects": [f"{u.subdomain}.{cfg.domain}" for u in cfg.upstreams],
         "generated_at": public_meta["generated_at"],
     }
+    try:
+        crtsh_state = fetch_crtsh_state(cfg.domain)
+    except Exception as e:
+        log.warning("crt.sh query failed for %s: %s", hl(cfg.domain), e)
+        crtsh_state = {
+            "domain": cfg.domain,
+            "generated_at": public_meta["generated_at"],
+            "error": str(e),
+            "entries": [],
+            "match_count": 0,
+            "latest": None,
+            "latest_validity": "unknown",
+        }
 
     log_if_changed(INDEX_HTML, render_status_index_html(cfg, public_meta), "status index.html")
-    log_if_changed(ACME_STATE_JSON, json.dumps(acme_state, indent=2), "acme-state.json")
+    write_status_json(ACME_STATE_JSON, acme_state, "acme-state.json")
+    write_status_json(CRTSH_STATE_JSON, crtsh_state, "crtsh-state.json")
 
 
 def print_update_status() -> None:
     status = check_caddy_update_status()
     print("=== Caddy Update Check ===")
-    print(f"Built Version:  {status.get('built')}")
-    print(f"Latest Version: {status.get('latest')}")
+    print(f"Built Version:  {hl(status.get('built'))}")
+    print(f"Latest Version: {hl(status.get('latest'))}")
     print(
         "Native upgrade command:",
-        "supported" if status.get("native_upgrade_supported") else "not available",
+        hl("supported" if status.get("native_upgrade_supported") else "not available"),
     )
     if status.get("recommended") is True:
-        print("Recommendation: update recommended")
+        print(f"Recommendation: {hl('update recommended')}")
     elif status.get("recommended") is False:
-        print("Recommendation: up-to-date")
+        print(f"Recommendation: {hl('up-to-date')}")
     else:
         print(f"Recommendation: unknown ({status.get('error', 'n/a')})")
 
@@ -514,9 +828,15 @@ def main(rebuild: bool = False, show_certs: bool = False, print_caddyfile: bool 
 
     set_datadir(DATADIR)
     cfg = ReverseProxyConfig.from_sources()
-    log.info("Loaded env+upstreams config for domain %s with %d upstream(s)", cfg.domain, len(cfg.upstreams))
+    log.info(
+        "Loaded env+upstreams config for domain %s with %s upstream(s), dnsmasq mode %s target %s",
+        hl(cfg.domain),
+        hl(len(cfg.upstreams)),
+        hl(cfg.dnsmasq_address_mode),
+        hl(cfg.dnsmasq_address_ip),
+    )
 
-    caddyfile_content = render_caddy(cfg)
+    caddyfile_content = format_caddyfile_content(render_caddy(cfg))
 
     if print_caddyfile:
         print(caddyfile_content)
@@ -525,18 +845,19 @@ def main(rebuild: bool = False, show_certs: bool = False, print_caddyfile: bool 
     if rebuild or not CADDY.exists() or not caddy_has_plugin(cfg.dns_provider):
         build_caddy(cfg.dns_provider, cfg.caddy_version)
     else:
-        log.info("Existing Caddy binary already has dns provider %s; skipping rebuild", cfg.dns_provider)
+        log.info(
+            "Existing Caddy binary already has dns provider %s; skipping rebuild",
+            hl(cfg.dns_provider),
+        )
 
     run_extensions(cfg)
 
     log_if_changed(CFILE, caddyfile_content, "Caddyfile")
+    format_caddyfile_in_place(CFILE)
     log_if_changed(DNSMASQ, render_dnsmasq(cfg), "dnsmasq.conf")
 
-    try:
-        run([str(CADDY), "trust"])
-        log.info("Executed 'caddy trust' (may be a no-op in Docker)")
-    except RuntimeError:
-        log.warning("caddy trust failed – likely running as non-root")
+    # caddy trust needs a running admin endpoint; skip pre-run invocation.
+    log.info("Skipping 'caddy trust' during bootstrap (admin endpoint not yet running)")
 
     try:
         cert_info = auto_export_internal_ca()
@@ -552,10 +873,14 @@ def main(rebuild: bool = False, show_certs: bool = False, print_caddyfile: bool 
 
     caddy_runtime_file = CFILE
     if CFILE_OVERWRITE.exists():
-        log.warning("Detected %s; using overwrite file instead of generated Caddyfile", CFILE_OVERWRITE)
+        log.warning(
+            "Detected %s; using overwrite file instead of generated Caddyfile",
+            hl(CFILE_OVERWRITE),
+        )
         caddy_runtime_file = CFILE_OVERWRITE
 
-    log.info("Starting Caddy using config %s", caddy_runtime_file)
+    prepare_caddy_runtime_env()
+    log.info("Starting Caddy using config %s", hl(caddy_runtime_file))
     os.execvp(str(CADDY), [str(CADDY), "run", "--config", str(caddy_runtime_file), "--adapter", "caddyfile"])
 
 

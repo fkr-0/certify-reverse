@@ -31,12 +31,50 @@ check_docker_compose() {
 
 compose() {
   cd "$SCRIPT_DIR"
-  HOST_UID="$(id -u)" HOST_GID="$(id -g)" $DOCKER_COMPOSE -f "$COMPOSE_FILE" "$@"
+  local derived_builder_image
+  derived_builder_image="$(derive_builder_image_from_version)"
+  HOST_UID="$(id -u)" HOST_GID="$(id -g)" HOST_DNSMASQ_ADDRESS_IP="$(derive_host_src_ip || true)" CERTIFY_REVERSE_COMMIT="$(git_commit_short || true)" CADDY_BUILDER_IMAGE="${CADDY_BUILDER_IMAGE:-$derived_builder_image}" $DOCKER_COMPOSE -f "$COMPOSE_FILE" "$@"
 }
 
 compose_caddyfile() {
   cd "$SCRIPT_DIR"
-  HOST_UID="$(id -u)" HOST_GID="$(id -g)" $DOCKER_COMPOSE -f "$COMPOSE_FILE" -f "$COMPOSE_CADDYFILE_OVERRIDE" "$@"
+  local derived_builder_image
+  derived_builder_image="$(derive_builder_image_from_version)"
+  HOST_UID="$(id -u)" HOST_GID="$(id -g)" HOST_DNSMASQ_ADDRESS_IP="$(derive_host_src_ip || true)" CERTIFY_REVERSE_COMMIT="$(git_commit_short || true)" CADDY_BUILDER_IMAGE="${CADDY_BUILDER_IMAGE:-$derived_builder_image}" $DOCKER_COMPOSE -f "$COMPOSE_FILE" -f "$COMPOSE_CADDYFILE_OVERRIDE" "$@"
+}
+
+derive_host_src_ip() {
+  command -v ip >/dev/null 2>&1 || return 1
+  ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}'
+}
+
+git_commit_short() {
+  git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null
+}
+
+derive_builder_image_from_version() {
+  local requested="${CADDY_VERSION:-}"
+
+  if [[ -z "$requested" && -f "$SCRIPT_DIR/.env" ]]; then
+    requested="$(sed -n 's/^CADDY_VERSION=//p' "$SCRIPT_DIR/.env" | tail -n1)"
+  fi
+
+  requested="${requested%\"}"
+  requested="${requested#\"}"
+  requested="${requested%\'}"
+  requested="${requested#\'}"
+
+  if [[ -z "$requested" || "$requested" == "latest" ]]; then
+    echo "caddy:2.10.0-builder"
+    return
+  fi
+
+  requested="${requested#v}"
+  echo "caddy:${requested}-builder"
+}
+
+caddy_is_running() {
+  compose ps --services --filter status=running 2>/dev/null | grep -qx "$COMPOSE_SERVICE"
 }
 
 project_version() {
@@ -51,7 +89,7 @@ Runtime commands:
   start
   stop
   restart
-  logs [--follow]
+  logs [--follow] [service]
   shell
   exec <command>
   app [args...]
@@ -65,6 +103,7 @@ Runtime commands:
   build
   down
   clean
+  reload-dnsmasq
 
 Project commands:
   verify
@@ -82,11 +121,19 @@ stop_services() { log_info "Stopping services..."; compose stop; log_success "Se
 restart_services() { log_info "Restarting services..."; compose restart; log_success "Services restarted"; }
 
 show_logs() {
+  local follow=""
+  local service=""
   if [[ "${1:-}" == "--follow" ]]; then
-    compose logs -f "$COMPOSE_SERVICE"
-  else
-    compose logs --tail=50 "$COMPOSE_SERVICE"
+    follow="-f"
+    shift || true
   fi
+  service="${1:-}"
+
+  if [[ -n "$service" ]]; then
+    compose logs $follow --tail=100 "$service"
+    return
+  fi
+  compose logs $follow --tail=100 caddy dnsmasq
 }
 
 open_shell() { compose exec "$COMPOSE_SERVICE" /bin/sh; }
@@ -102,7 +149,15 @@ exec_command() {
 run_app() { compose exec "$COMPOSE_SERVICE" certify-reverse "$@"; }
 show_certificates() { compose exec "$COMPOSE_SERVICE" certify-reverse --show-certs; }
 check_updates() { compose exec "$COMPOSE_SERVICE" certify-reverse --check-updates; }
-rebuild_caddy() { compose exec "$COMPOSE_SERVICE" certify-reverse --rebuild-caddy; }
+rebuild_caddy() {
+  if caddy_is_running; then
+    log_info "Rebuilding Caddy in running service container..."
+    compose exec "$COMPOSE_SERVICE" certify-reverse --rebuild-caddy
+    return
+  fi
+  log_warn "Service '$COMPOSE_SERVICE' is not running; using one-shot rebuild container."
+  compose run --rm --no-deps "$COMPOSE_SERVICE" --rebuild-caddy
+}
 print_caddyfile() { compose_caddyfile run --rm caddy; }
 
 show_config() {
@@ -148,6 +203,11 @@ build_images() {
 }
 
 down_services() { compose down; }
+reload_dnsmasq() {
+  log_info "Sending SIGHUP to dnsmasq for config reload..."
+  compose kill -s HUP dnsmasq
+  log_success "dnsmasq reload signal sent"
+}
 
 clean_all() {
   log_warn "This will remove containers, networks, and volumes. Continue? (y/N)"
@@ -201,6 +261,7 @@ main() {
     build) build_images ;;
     down) down_services ;;
     clean) clean_all ;;
+    reload-dnsmasq) reload_dnsmasq ;;
     verify) verify_project ;;
     version) show_version ;;
     bump-patch) bump_patch ;;

@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from certify_reverse.templates import render_status_index_html
+from certify_reverse.templates import render_caddy, render_dnsmasq, render_status_index_html
 
 
 class _Upstream:
@@ -13,10 +13,21 @@ class _Upstream:
         self.ip = ip
         self.port = port
         self.scheme = scheme
+        self.forward_auth_headers = True
+        self.skip_verify = False
+        self.trust_pool = None
+
+    @property
+    def is_https(self):
+        return self.scheme == "https"
 
 
 class _Cfg:
+    email = "admin@example.com"
+    dns_provider = "desec"
+    dns_token = "token"
     domain = "example.com"
+    dnsmasq_address_ip = "10.0.0.1"
     upstreams = [_Upstream("app", "10.0.0.10", 8080, "http")]
 
 
@@ -26,6 +37,8 @@ class TemplatesRegressionTests(unittest.TestCase):
             _Cfg(),
             {
                 "domain": "example.com",
+                "certify_reverse_version": "0.5.0",
+                "certify_reverse_commit": "deadbee",
                 "email": "admin@example.com",
                 "dns_provider": "desec",
                 "caddy_requested_version": "latest",
@@ -40,6 +53,40 @@ class TemplatesRegressionTests(unittest.TestCase):
         self.assertIn("${e.message}", html)
         self.assertIn("status.example.com/probe/app/", html)
         self.assertIn("Native Upgrade Cmd", html)
+        self.assertIn("certify-reverse v${appVer} Dashboard", html)
+        self.assertIn("certify-reverse commit:", html)
+        self.assertIn("crt.sh Certificate History", html)
+        self.assertIn("fetch('/crtsh-state.json'", html)
+        self.assertIn("/probe/crtsh?q=", html)
+        self.assertIn("crt.sh Status", html)
+        self.assertIn("Querying crt.sh status...", html)
+        self.assertIn("Latest Valid Until", html)
+        self.assertIn("Certificate Validity", html)
+        self.assertIn("Last Queried", html)
+        self.assertIn("↻ Refresh", html)
+        self.assertIn("<th>Ping</th>", html)
+        self.assertIn("<th>Cert</th>", html)
+        self.assertNotIn("<th>Status</th>", html)
+        self.assertNotIn("<th>Actions</th>", html)
+
+    def test_render_caddy_does_not_emit_unsupported_pki_options(self):
+        caddyfile = render_caddy(_Cfg())
+        self.assertNotIn("root_ca_ttl", caddyfile)
+        self.assertNotIn("intermediate_ca_ttl", caddyfile)
+        self.assertIn("acme_dns desec", caddyfile)
+        self.assertIn("handle_path /probe/crtsh", caddyfile)
+
+    def test_render_dnsmasq_logs_to_data_logs(self):
+        conf = render_dnsmasq(_Cfg())
+        self.assertIn("log-facility=/data/logs/dnsmasq.log", conf)
+        self.assertIn("address=/.example.com/10.0.0.1", conf)
+
+    def test_render_dnsmasq_uses_configured_target_ip(self):
+        class _CfgCustom(_Cfg):
+            dnsmasq_address_ip = "192.168.23.10"
+
+        conf = render_dnsmasq(_CfgCustom())
+        self.assertIn("address=/.example.com/192.168.23.10", conf)
 
 
 if __name__ == "__main__":

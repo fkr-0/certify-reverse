@@ -90,6 +90,54 @@ class ComposeIntegrationTests(unittest.TestCase):
         self.assertIn(f"status.{domain}", output)
         self.assertIn(f"{first_subdomain}.{domain}", output)
 
+    def test_env_file_overrides_inherited_caddy_version(self):
+        root = Path(__file__).resolve().parents[1]
+        env_file = root / ".env"
+        if not env_file.exists():
+            self.skipTest(".env missing")
+
+        env_data = _load_env(env_file)
+        expected = env_data.get("CADDY_VERSION")
+        if not expected:
+            self.skipTest("CADDY_VERSION missing in .env")
+
+        cmd = [
+            "docker",
+            "compose",
+            "-f",
+            "docker/docker-compose.yml",
+            "run",
+            "--rm",
+            "--no-deps",
+            "-e",
+            "CADDY_VERSION=v2.10.0",
+            "--entrypoint",
+            "python3",
+            "caddy",
+            "-c",
+            "from certify_reverse.cli import ReverseProxyConfig; print(ReverseProxyConfig.from_sources().caddy_version)",
+        ]
+        proc = subprocess.run(
+            cmd,
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+
+        if proc.returncode != 0:
+            self.fail(
+                "compose env precedence integration run failed\n"
+                f"returncode={proc.returncode}\n"
+                f"stdout:\n{proc.stdout}\n"
+                f"stderr:\n{proc.stderr}"
+            )
+
+        out = (proc.stdout + "\n" + proc.stderr).strip()
+        self.assertIn(expected, out)
+
 
 if __name__ == "__main__":
     unittest.main()

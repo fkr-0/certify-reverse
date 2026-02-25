@@ -65,7 +65,17 @@ Everything goes through `./caddy-docker.sh`:
 Runtime:
 - `start`, `stop`, `restart`, `logs`, `status`, `config`, `data`
 - `check-updates`, `rebuild-caddy`, `print-caddyfile`
+- `reload-dnsmasq`
 - `app --<flags>` passthrough
+
+`rebuild-caddy` behavior:
+- If `caddy` service is running, it uses `docker compose exec caddy certify-reverse --rebuild-caddy`.
+- If `caddy` service is not running, it falls back to `docker compose run --rm --no-deps caddy --rebuild-caddy` (one-shot rebuild container).
+- Rebuild uses writable per-workdir Go caches (`/data/caddybuild/.cache`) so non-root UID/GID container runs do not fail on `/.cache/go-build` permissions.
+- `logs` behavior:
+  - `./caddy-docker.sh logs` shows both `caddy` and `dnsmasq`.
+  - `./caddy-docker.sh logs --follow` follows both.
+  - `./caddy-docker.sh logs --follow caddy` (or `dnsmasq`) filters to one service.
 
 Project/version:
 - `verify`
@@ -81,6 +91,7 @@ Examples:
 ./caddy-docker.sh check-updates
 ./caddy-docker.sh rebuild-caddy
 ./caddy-docker.sh print-caddyfile
+./caddy-docker.sh reload-dnsmasq
 ./caddy-docker.sh version
 ./caddy-docker.sh bump-patch
 ```
@@ -95,9 +106,29 @@ Examples:
    - `/data/dnsmasq.conf`
    - `/data/index.html`
    - `/data/acme-state.json`
+   - `/data/crtsh-state.json`
 5. If generated content changed, unified diff is logged.
 6. If `/data/Caddyfile.overwrite` exists, that file is used at runtime.
 7. App starts Caddy with selected config file.
+
+dnsmasq behavior:
+- Uses generated `/data/dnsmasq.conf`.
+- Logs to `/data/logs/dnsmasq.log` (directory is created on startup).
+- Wildcard DNS target IP is configured via `.env` `DNSMASQ_ADDRESS_IP` (default `10.0.0.1`).
+- Wildcard DNS target selection mode via `.env` `DNSMASQ_ADDRESS_MODE`:
+  - `manual` (default): use `DNSMASQ_ADDRESS_IP`.
+  - `host-src-ip`: auto-derive host source IP using `ip -4 route get 1.1.1.1` from `caddy-docker.sh` and pass it to runtime; fallback to `DNSMASQ_ADDRESS_IP`.
+- Optional extra CLI flags via `.env`:
+
+```env
+DNSMASQ_EXTRA_ARGS="-q"
+```
+
+- Config reload on demand:
+
+```bash
+./caddy-docker.sh reload-dnsmasq
+```
 
 If setup is invalid (missing env vars or upstream file), startup now fails with a concise actionable error and exits cleanly instead of dumping a long traceback.
 
@@ -123,6 +154,10 @@ CADDY_VERSION=v2.10.2
 CADDY_BUILDER_IMAGE=caddy:2.10.0-builder
 ```
 
+- If `CADDY_BUILDER_IMAGE` is not set, `./caddy-docker.sh` derives it from `CADDY_VERSION`:
+  - `CADDY_VERSION=v2.10.0` -> `caddy:2.10.0-builder`
+  - `CADDY_VERSION=latest` -> fallback `caddy:2.10.0-builder`
+
 - Check update recommendation:
 
 ```bash
@@ -136,6 +171,16 @@ Generated `/data/index.html` includes:
 - ping/check-cert actions backed by server-side probe endpoints on `status.<domain>`,
 - non-secret metadata (email, provider, built/latest caddy version),
 - ACME state summary from `/data/acme-state.json`.
+- crt.sh certificate history table sourced from `/data/crtsh-state.json` on page load.
+
+Startup also queries `crt.sh` for the configured domain and logs:
+- match count,
+- latest certificate id/not_after,
+- derived validity state.
+
+The dashboard can also query live crt.sh via Caddy proxy endpoint:
+- `status.<domain>/probe/crtsh?q=<domain>&output=json`
+- This avoids browser CORS issues against `crt.sh` directly.
 
 Update checks now also report whether the built Caddy binary exposes a native `upgrade` command.
 

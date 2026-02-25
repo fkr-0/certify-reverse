@@ -4,12 +4,16 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-02-25
+
 ### Added
 
 - Configurable Docker builder base image via `.env`:
   - `CADDY_BUILDER_IMAGE` (used as compose build arg for `docker/Dockerfile`).
 - Python test suite under `tests/` with:
   - regression coverage for JS template escaping issues,
+  - regression coverage ensuring generated Caddyfile does not emit unsupported `pki` options,
+  - regression coverage for ANSI-highlight + file-log stripping behavior,
   - config parsing/validation unit tests,
   - CA export behavior tests.
 - Container-level integration test (`tests/test_integration_compose.py`) that runs Compose-based Caddyfile generation and auto-skips when Docker Compose is unavailable.
@@ -19,7 +23,39 @@ All notable changes to this project are documented here.
 
 - `caddy-docker.sh verify` now runs unittest discovery (including integration tests with skip semantics) in addition to syntax/compose validation.
 - Improved compatibility with Caddy command variants by removing unsupported trust/export flags and using internal PKI-file export logic.
+- Removed unsupported Caddyfile `pki` options from generated config (fixes `root_ca_ttl` parse failures).
 - Fixed dashboard template JS interpolation escaping that could crash runtime HTML generation.
+- Interactive logs now highlight key values (domain/upstream counts/provider/paths/version recommendation) while rotating file logs remain plain text.
+- `./caddy-docker.sh rebuild-caddy` no longer requires a running `caddy` container; it now falls back to a one-shot `docker compose run --rm --no-deps caddy --rebuild-caddy` when service is down.
+- Runtime Caddy rebuild now sets writable `HOME`/`XDG_CACHE_HOME`/`GOCACHE`/`GOMODCACHE`/`TMPDIR` under `/data/caddybuild`, fixing non-root cache permission failures like `mkdir /.cache: permission denied`.
+- Caddy rebuild is now atomic: builds to a temporary binary first and only replaces `/data/caddy-rebuild` after successful build output.
+- `caddy-docker.sh` now derives `CADDY_BUILDER_IMAGE` from `CADDY_VERSION` when unset (e.g. `v2.10.0 -> caddy:2.10.0-builder`).
+- `/config/.env` values now override inherited image environment defaults (fixes cases where base image `CADDY_VERSION` prevented requested runtime version from being applied).
+- Runtime rebuild now forces `GOTOOLCHAIN=auto` (instead of inheriting `local`) so Go can select/download newer toolchains when required by newer Caddy versions.
+- Removed pinned/configurable Go image selection from project config surface; Go toolchain selection is now handled by enforced `GOTOOLCHAIN=auto` during runtime rebuilds.
+- Runtime rebuild now sets `XCADDY_SETCAP=0` to prevent non-root `setcap` failures (`CAP_SETFCAP`), relying on container `NET_BIND_SERVICE` capability for low-port binding.
+- Generated Caddyfile now removes redundant `header_up X-Forwarded-Host` entries that triggered startup warnings.
+- Generated Caddyfile content is now pre-formatted via `caddy fmt` to avoid runtime formatting warnings.
+- Caddy runtime now exports writable `HOME`/`XDG_CONFIG_HOME`/`XDG_DATA_HOME`/`XDG_CACHE_HOME` under `/data`, fixing `/.config` and `/.local` permission/storage errors on non-root containers.
+- dnsmasq now starts with a guaranteed writable `/data` mount and creates `/data/logs` before launch, fixing missing log-path startup failures.
+- dnsmasq now supports optional extra CLI flags via `.env` (`DNSMASQ_EXTRA_ARGS`).
+- Added `./caddy-docker.sh reload-dnsmasq` to send `SIGHUP` for dnsmasq config reloads without full stack restart.
+- Added crt.sh integration on startup:
+  - queries `https://crt.sh/?q=<domain>&output=json`,
+  - logs latest matching certificate and derived validity status,
+  - writes `/data/crtsh-state.json`.
+- Dashboard now loads `/crtsh-state.json` client-side and renders the full crt.sh result set as a dynamic table on page load.
+- Added Caddy status probe endpoint `/probe/crtsh` (proxy to `https://crt.sh`) and dashboard live-refresh action using this endpoint to avoid direct browser-to-crt.sh CORS issues.
+- dnsmasq wildcard address target is now configurable via `.env` (`DNSMASQ_ADDRESS_IP`) instead of being hardcoded.
+- Added `DNSMASQ_ADDRESS_MODE`:
+  - `manual` (uses `DNSMASQ_ADDRESS_IP`),
+  - `host-src-ip` (derives host source IP from route table with manual fallback).
+- `host-src-ip` mode now prefers a host-derived source IP provided by `caddy-docker.sh` (`HOST_DNSMASQ_ADDRESS_IP`) so wildcard DNS targets resolve to host/LAN-reachable addresses instead of container-internal routes.
+- `caddy-docker.sh logs` now shows both `caddy` and `dnsmasq` by default; optional service filter supported.
+- Bootstrap now skips pre-run `caddy trust` (which requires an active admin endpoint), reducing startup noise.
+- Generated Caddyfile is now formatted in-place (`caddy fmt --overwrite`) after write to avoid adapter formatting warnings.
+- Dashboard Services table now has dedicated `Ping` and `Cert` columns with automatic async checks on page load and per-result refresh controls.
+- Dashboard crt.sh status now includes dedicated refresh control and `Last Queried` timestamp for the currently displayed status result.
 
 ## [0.3.5] - 2026-02-25
 
