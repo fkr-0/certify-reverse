@@ -6,8 +6,9 @@ echo "▶️  Installing runtime deps (root, once)…"
 apk add --no-cache \
   dnsmasq \
   openssh-client rsync \
+  go \
   curl jq git \
-  python3 py3-pip py3-yaml \
+  python3 py3-pip py3-yaml py3-rich \
   logrotate tzdata \
   su-exec libcap openssl
 
@@ -15,7 +16,7 @@ apk add --no-cache \
 echo '▶️  Adding lower priv user "app"…'
 adduser -D -h /home/app -s /sbin/nologin app || echo 'user "app" lready existing, OK'
 chown -R app:app /data # /config /app /root
-app caddy
+/usr/bin/app
 # ------------------------------------------------------------------
 # dropping privileges
 # su-exec app /bin/sh -c 'app caddy'

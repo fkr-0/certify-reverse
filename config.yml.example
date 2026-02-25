@@ -1,0 +1,19 @@
+# Copy this file to config.yml and fill in real values.
+# Do not commit real tokens.
+
+dns_provider: desec
+dns_token: "REPLACE_WITH_DNS_API_TOKEN"
+email: admin@example.com
+domain: example.com
+upstreams:
+  - subdomain: "app"
+    ip: 10.0.0.10
+    port: 8080
+    scheme: "http"
+
+  - subdomain: "secure-app"
+    ip: 10.0.0.20
+    port: 8443
+    scheme: "https"
+    skip_verify: false
+    # trust_pool: /data/exported-certs/caddy-internal-ca.pem
