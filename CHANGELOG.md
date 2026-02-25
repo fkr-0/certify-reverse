@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-02-25
+
+### Changed
+
+- Favicon routing adjusted to avoid overriding upstream application favicons:
+  - project favicon is served for status/static pages,
+  - upstream site blocks no longer intercept `/favicon.ico`, so proxied apps can serve their own favicon.
+
 ## [0.5.0] - 2026-02-25
 
 ### Added

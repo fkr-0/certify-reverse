@@ -107,10 +107,6 @@ def _render_upstream_block(upstream: "Upstream", domain: str) -> str:
     """Render a single upstream configuration block."""
     rp_target = f"{upstream.scheme}://{upstream.ip}:{upstream.port}"
     block = [f"{upstream.subdomain}.{domain} " + "{"]
-    block.append("    handle /favicon.ico {")
-    block.append("        root * /data/")
-    block.append("        file_server")
-    block.append("    }")
     block.append(f"    reverse_proxy {rp_target} " + "{")
 
     # Forward authentication headers if enabled
