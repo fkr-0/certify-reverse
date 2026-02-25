@@ -75,6 +75,7 @@ class TemplatesRegressionTests(unittest.TestCase):
         self.assertNotIn("intermediate_ca_ttl", caddyfile)
         self.assertIn("acme_dns desec", caddyfile)
         self.assertIn("handle_path /probe/crtsh", caddyfile)
+        self.assertIn("handle /favicon.ico", caddyfile)
 
     def test_render_dnsmasq_logs_to_data_logs(self):
         conf = render_dnsmasq(_Cfg())

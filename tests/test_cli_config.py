@@ -81,6 +81,18 @@ class CliConfigTests(unittest.TestCase):
                 else:
                     os.environ[k] = v
 
+    def test_write_static_assets_writes_favicon_into_datadir(self):
+        old_datadir = cli.DATADIR
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                cli.DATADIR = Path(tmp)
+                cli.write_static_assets()
+                favicon = cli.DATADIR / "favicon.ico"
+                self.assertTrue(favicon.exists())
+                self.assertGreater(favicon.stat().st_size, 0)
+        finally:
+            cli.DATADIR = old_datadir
+
     def test_env_first_accepts_upper_and_lower_case_keys(self):
         keys = ("DNSMASQ_ADDRESS_IP", "dnsmasq_address_ip")
         old = {k: os.environ.get(k) for k in keys}

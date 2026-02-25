@@ -4,6 +4,7 @@ Template rendering functions for Caddy and dnsmasq configurations.
 
 This module contains all templating logic separated from the main application logic.
 """
+
 import textwrap
 import json
 from pathlib import Path
@@ -22,19 +23,17 @@ def set_datadir(datadir: Path):
     DATADIR = datadir
 
 
-def render_caddy(cfg: 'ReverseProxyConfig') -> str:
+def render_caddy(cfg: "ReverseProxyConfig") -> str:
     """Render Caddyfile configuration from ReverseProxyConfig."""
     # Global configuration block
-    global_config = textwrap.dedent(
-        f"""
+    global_config = textwrap.dedent(f"""
     {{
         email {cfg.email}
         acme_dns {cfg.dns_provider} {{
             token {cfg.dns_token}
         }}
     }}
-    """
-    ).strip()
+    """).strip()
 
     blocks = []
 
@@ -44,6 +43,10 @@ def render_caddy(cfg: 'ReverseProxyConfig') -> str:
         "    header /probe/* Access-Control-Allow-Origin *",
         "    header /acme-state.json Access-Control-Allow-Origin *",
         "    header /crtsh-state.json Access-Control-Allow-Origin *",
+        "    handle /favicon.ico {",
+        "        root * /data/",
+        "        file_server",
+        "    }",
         "    handle_path /probe/crtsh {",
         "        reverse_proxy https://crt.sh",
         "    }",
@@ -51,7 +54,8 @@ def render_caddy(cfg: 'ReverseProxyConfig') -> str:
     for upstream in cfg.upstreams:
         status_lines.append(f"    handle_path /probe/{upstream.subdomain}/* " + "{")
         status_lines.append(
-            f"        reverse_proxy {upstream.scheme}://{upstream.ip}:{upstream.port} " + "{"
+            f"        reverse_proxy {upstream.scheme}://{upstream.ip}:{upstream.port} "
+            + "{"
         )
         if upstream.forward_auth_headers:
             status_lines.append("            header_up X-Real-IP {remote}")
@@ -69,11 +73,9 @@ def render_caddy(cfg: 'ReverseProxyConfig') -> str:
         ]
     )
     blocks.append("\n".join(status_lines))
-    
+
     # Internal certificate server for services to get their certs
-    blocks.append(
-        textwrap.dedent(
-            f"""
+    blocks.append(textwrap.dedent(f"""
     # Internal certificate distribution endpoint
     internal-ca.{cfg.domain} {{
         handle /cert/* {{
@@ -83,22 +85,16 @@ def render_caddy(cfg: 'ReverseProxyConfig') -> str:
             respond "Caddy Internal CA Service" 200
         }}
     }}
-    """
-        )
-    )
-    
+    """))
+
     # Wildcard convenience host
-    blocks.append(
-        textwrap.dedent(
-            f"""
+    blocks.append(textwrap.dedent(f"""
     *.{cfg.domain} {{
         root * /data/
         file_server
     }}
-    """
-        )
-    )
-    
+    """))
+
     # Specific upstream configurations
     for upstream in cfg.upstreams:
         block = _render_upstream_block(upstream, cfg.domain)
@@ -107,29 +103,33 @@ def render_caddy(cfg: 'ReverseProxyConfig') -> str:
     return "\n\n".join([global_config] + blocks)
 
 
-def _render_upstream_block(upstream: 'Upstream', domain: str) -> str:
+def _render_upstream_block(upstream: "Upstream", domain: str) -> str:
     """Render a single upstream configuration block."""
     rp_target = f"{upstream.scheme}://{upstream.ip}:{upstream.port}"
     block = [f"{upstream.subdomain}.{domain} " + "{"]
+    block.append("    handle /favicon.ico {")
+    block.append("        root * /data/")
+    block.append("        file_server")
+    block.append("    }")
     block.append(f"    reverse_proxy {rp_target} " + "{")
-    
+
     # Forward authentication headers if enabled
     if upstream.forward_auth_headers:
         block.append("        header_up X-Real-IP {remote}")
-    
+
     # Handle HTTPS transport configuration
     if upstream.is_https:
         transport_config = _render_transport_config(upstream)
         if transport_config:
             block.append(f"        {transport_config}")
-    
+
     block.append("    }")  # close reverse_proxy block
-    block.append("}")      # close site block
-    
+    block.append("}")  # close site block
+
     return "\n".join(block)
 
 
-def _render_transport_config(upstream: 'Upstream') -> str:
+def _render_transport_config(upstream: "Upstream") -> str:
     """Render transport configuration for HTTPS upstreams."""
     if upstream.skip_verify:
         return "transport http { tls_insecure_skip_verify }"
@@ -142,24 +142,22 @@ def _render_transport_config(upstream: 'Upstream') -> str:
         return f"transport http {{ tls_trust_pool file {ca_cert_path} }}"
 
 
-def render_dnsmasq(cfg: 'ReverseProxyConfig') -> str:
+def render_dnsmasq(cfg: "ReverseProxyConfig") -> str:
     """Render dnsmasq configuration from ReverseProxyConfig."""
     # Wildcard domain -> reverse-proxy host IP
     target_ip = getattr(cfg, "dnsmasq_address_ip", "10.0.0.1")
-    return textwrap.dedent(
-        f"""
+    return textwrap.dedent(f"""
     no-resolv
     log-queries
     log-facility=/data/logs/dnsmasq.log
     address=/.{cfg.domain}/{target_ip}
-    """
-    ).lstrip()
+    """).lstrip()
 
 
 def render_upstream_tls_setup_guide(cert_info: dict) -> str:
     """Render the upstream TLS setup guide markdown content."""
     import time
-    
+
     return f"""# Upstream TLS Configuration
 
 ## Caddy Internal Certificate Export
@@ -293,6 +291,8 @@ def render_status_index_html(cfg: "ReverseProxyConfig", public_meta: dict) -> st
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
   <title>certify-reverse status</title>
   <style>
     :root {{
@@ -376,12 +376,14 @@ def render_status_index_html(cfg: "ReverseProxyConfig", public_meta: dict) -> st
       <div class="meta" id="meta"></div>
     </div>
     <div class="card">
+    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
       <h2>crt.sh Status <span id="crtsh-domain"></span></h2>
       <p class="note" id="crtsh-loading"><span class="spinner"></span>Querying crt.sh status...</p>
       <div class="toolbar">
         <button class="btn" id="crtsh-refresh-status">↻ Refresh</button>
       </div>
-      <div class="kv" id="crtsh-status"></div>
+    </div>
+    <div class="kv" id="crtsh-status"></div>
     </div>
     <div class="card">
       <h2>Services</h2>
@@ -432,8 +434,6 @@ def render_status_index_html(cfg: "ReverseProxyConfig", public_meta: dict) -> st
       t.textContent = `certify-reverse v${{appVer}} Dashboard`;
       const el = document.getElementById('meta');
       el.innerHTML = `
-        <p><strong>certify-reverse version:</strong> ${{esc(meta.certify_reverse_version || 'unknown')}}</p>
-        <p><strong>certify-reverse commit:</strong> ${{esc(meta.certify_reverse_commit || 'unknown')}}</p>
         <p><strong>Domain:</strong> ${{esc(meta.domain)}}</p>
         <p><strong>Email:</strong> ${{esc(meta.email)}}</p>
         <p><strong>DNS Provider:</strong> ${{esc(meta.dns_provider)}}</p>
@@ -441,6 +441,8 @@ def render_status_index_html(cfg: "ReverseProxyConfig", public_meta: dict) -> st
         <p><strong>Caddy Built:</strong> ${{esc(meta.caddy_built_version)}}</p>
         <p><strong>Caddy Latest:</strong> ${{esc(meta.caddy_latest_version)}} (${{meta.caddy_update_recommended ? 'update recommended' : 'up-to-date/unknown'}})</p>
         <p><strong>Native Upgrade Cmd:</strong> ${{meta.caddy_native_upgrade_supported ? 'available' : 'not available'}}</p>
+        <p><strong>certify-reverse version:</strong> ${{esc(meta.certify_reverse_version || 'unknown')}}</p>
+        <p><strong>certify-reverse commit:</strong> ${{esc(meta.certify_reverse_commit || 'unknown')}}</p>
         <p><strong>Generated At:</strong> ${{esc(meta.generated_at)}}</p>
       `;
     }}

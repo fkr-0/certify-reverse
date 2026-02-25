@@ -12,6 +12,7 @@ import argparse
 import difflib
 import importlib
 import importlib.metadata
+import importlib.resources
 import json
 import logging
 import os
@@ -757,6 +758,8 @@ def run_extensions(cfg: ReverseProxyConfig) -> None:
 
 
 def write_status_assets(cfg: ReverseProxyConfig) -> None:
+    write_static_assets()
+
     update_info = check_caddy_update_status()
     public_meta = {
         "certify_reverse_version": get_app_version(),
@@ -802,6 +805,27 @@ def write_status_assets(cfg: ReverseProxyConfig) -> None:
     log_if_changed(INDEX_HTML, render_status_index_html(cfg, public_meta), "status index.html")
     write_status_json(ACME_STATE_JSON, acme_state, "acme-state.json")
     write_status_json(CRTSH_STATE_JSON, crtsh_state, "crtsh-state.json")
+
+
+def write_static_assets() -> None:
+    favicon_path = DATADIR / "favicon.ico"
+    try:
+        favicon_bytes = (
+            importlib.resources.files("certify_reverse")
+            .joinpath("static", "favicon.ico")
+            .read_bytes()
+        )
+    except Exception as e:
+        log.warning("Static favicon asset unavailable: %s", e)
+        return
+
+    old_bytes = favicon_path.read_bytes() if favicon_path.exists() else b""
+    if old_bytes == favicon_bytes:
+        log.info("favicon.ico unchanged -> %s", hl(favicon_path))
+        return
+
+    favicon_path.write_bytes(favicon_bytes)
+    log.info("favicon.ico updated -> %s", hl(favicon_path))
 
 
 def print_update_status() -> None:
