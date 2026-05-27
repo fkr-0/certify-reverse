@@ -19,6 +19,7 @@ Caddy reverse-proxy bootstrapper with DNS-01 automation, Caddy plugin rebuild su
 ## Next
 
 - [Getting Started](getting-started.md)
+- [Case Study: deSEC + AdGuard + http.server](case-study-desec-adguard-httpserver.md)
 - [Configuration](configuration.md)
 - [Operations](operations.md)
 - [Troubleshooting](troubleshooting.md)

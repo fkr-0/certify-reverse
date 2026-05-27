@@ -10,6 +10,7 @@ theme:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - Case Study (deSEC + AdGuard + http.server): case-study-desec-adguard-httpserver.md
   - Configuration: configuration.md
   - Operations: operations.md
   - Troubleshooting: troubleshooting.md
