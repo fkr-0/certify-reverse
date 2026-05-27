@@ -96,7 +96,40 @@ Check runtime:
 
 ## 6) Test routed HTTPS endpoints
 
-From a client that resolves `*.fkr.dev` to your reverse-proxy host:
+Before testing, choose one DNS client strategy:
+
+### Option A (typical): DHCP/network DNS points clients to dnsmasq
+
+Configure your router/DHCP server to advertise the reverse-proxy host (running dnsmasq) as DNS server for clients.
+
+- Pros: closest to production-like LAN behavior.
+- Result: all clients on the network resolve `*.fkr.dev` automatically.
+
+### Option B: local resolver override on one machine
+
+Temporarily point one test machine to the dnsmasq host as DNS resolver.
+
+- Linux (example): set resolver in NetworkManager/systemd-resolved for that interface.
+- macOS (example): set DNS server for the active network service.
+- Windows (example): set adapter DNS server manually.
+
+Use the reverse-proxy host IP (for example `10.0.0.1`) as DNS server.
+
+### Option C: `/etc/hosts` quick single-host checks
+
+For very quick checks without DNS changes, add explicit host entries:
+
+```text
+127.0.0.1 status.fkr.dev
+127.0.0.1 demo.fkr.dev
+127.0.0.1 adguard.fkr.dev
+```
+
+Notes:
+- `/etc/hosts` does not support wildcards.
+- If reverse-proxy runs on another host, replace `127.0.0.1` with that host IP.
+
+Then test from a client that can resolve those names:
 
 - `https://demo.fkr.dev`
 - `https://adguard.fkr.dev`
