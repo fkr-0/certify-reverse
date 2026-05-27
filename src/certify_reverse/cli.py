@@ -856,6 +856,10 @@ def main(rebuild: bool = False, show_certs: bool = False, print_caddyfile: bool 
 
     set_datadir(DATADIR)
     cfg = ReverseProxyConfig.from_sources()
+    os.environ["CADDY_DNS_PLUGIN"] = cfg.dns_provider
+    os.environ["CADDY_DNS_PLUGIN_TOKEN"] = cfg.dns_token
+    # Keep provider credential key configurable; default preserves previous behavior.
+    os.environ.setdefault("CADDY_DNS_PLUGIN_TOKEN_FIELD", "token")
     log.info(
         "Loaded env+upstreams config for domain %s with %s upstream(s), dnsmasq mode %s target %s",
         hl(cfg.domain),
