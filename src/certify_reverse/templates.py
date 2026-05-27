@@ -29,17 +29,16 @@ def render_caddy(cfg: "ReverseProxyConfig") -> str:
     global_config = textwrap.dedent(f"""
     {{
         email {cfg.email}
-        acme_dns {cfg.dns_provider} {{
-            token {cfg.dns_token}
-        }}
     }}
     """).strip()
 
     blocks = []
+    tls_block = _render_tls_block()
 
     # Dedicated status host with server-side probes for more reliable browser checks.
     status_lines = [
         f"status.{cfg.domain} " + "{",
+        tls_block,
         "    header /probe/* Access-Control-Allow-Origin *",
         "    header /acme-state.json Access-Control-Allow-Origin *",
         "    header /crtsh-state.json Access-Control-Allow-Origin *",
@@ -78,6 +77,7 @@ def render_caddy(cfg: "ReverseProxyConfig") -> str:
     blocks.append(textwrap.dedent(f"""
     # Internal certificate distribution endpoint
     internal-ca.{cfg.domain} {{
+        {tls_block}
         handle /cert/* {{
             reverse_proxy localhost:2021
         }}
@@ -90,6 +90,7 @@ def render_caddy(cfg: "ReverseProxyConfig") -> str:
     # Wildcard convenience host
     blocks.append(textwrap.dedent(f"""
     *.{cfg.domain} {{
+        {tls_block}
         root * /data/
         file_server
     }}
@@ -107,6 +108,7 @@ def _render_upstream_block(upstream: "Upstream", domain: str) -> str:
     """Render a single upstream configuration block."""
     rp_target = f"{upstream.scheme}://{upstream.ip}:{upstream.port}"
     block = [f"{upstream.subdomain}.{domain} " + "{"]
+    block.append(_render_tls_block())
     block.append(f"    reverse_proxy {rp_target} " + "{")
 
     # Forward authentication headers if enabled
@@ -123,6 +125,20 @@ def _render_upstream_block(upstream: "Upstream", domain: str) -> str:
     block.append("}")  # close site block
 
     return "\n".join(block)
+
+
+def _render_tls_block() -> str:
+    """Render a DNS-01 TLS config block with tuned propagation checks."""
+    return textwrap.dedent("""
+        tls {
+            dns {$CADDY_DNS_PLUGIN} {
+                api_token {$CADDY_DNS_PLUGIN_TOKEN}
+            }
+            propagation_delay 60s
+            propagation_timeout 15m
+            resolvers 1.1.1.1 8.8.8.8
+        }
+    """).strip()
 
 
 def _render_transport_config(upstream: "Upstream") -> str:

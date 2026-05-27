@@ -73,7 +73,12 @@ class TemplatesRegressionTests(unittest.TestCase):
         caddyfile = render_caddy(_Cfg())
         self.assertNotIn("root_ca_ttl", caddyfile)
         self.assertNotIn("intermediate_ca_ttl", caddyfile)
-        self.assertIn("acme_dns desec", caddyfile)
+        self.assertIn("tls {", caddyfile)
+        self.assertIn("dns {$CADDY_DNS_PLUGIN}", caddyfile)
+        self.assertIn("api_token {$CADDY_DNS_PLUGIN_TOKEN}", caddyfile)
+        self.assertIn("propagation_delay 60s", caddyfile)
+        self.assertIn("propagation_timeout 15m", caddyfile)
+        self.assertIn("resolvers 1.1.1.1 8.8.8.8", caddyfile)
         self.assertIn("handle_path /probe/crtsh", caddyfile)
         self.assertIn("handle /favicon.ico", caddyfile)
         self.assertNotIn(
