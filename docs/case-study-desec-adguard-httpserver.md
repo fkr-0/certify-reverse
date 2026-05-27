@@ -9,6 +9,8 @@ This walkthrough shows a realistic local setup using:
 
 All tokens/hostnames here are examples.
 
+Note: wildcard CNAME is not required for DNS-01.
+
 ## 1) Prepare config files
 
 ```bash
