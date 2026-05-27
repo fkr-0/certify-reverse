@@ -195,13 +195,17 @@ def env_first(*names: str, default: str = "") -> str:
 
 
 def is_ipv4(value: str) -> bool:
-    return bool(re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", value))
+    try:
+        socket.inet_aton(value)
+    except OSError:
+        return False
+    return value.count(".") == 3
 
 
 def resolve_hostname_ipv4(name: str) -> str | None:
     try:
         return socket.gethostbyname(name)
-    except Exception:
+    except OSError:
         return None
 
 
@@ -255,7 +259,7 @@ def derive_dnsmasq_address_ip(mode: str, manual_ip: str) -> str:
             "Could not parse src IP from 'ip route get' output; using manual DNSMASQ_ADDRESS_IP=%s",
             hl(manual_ip),
         )
-    except Exception as e:
+    except (subprocess.SubprocessError, OSError, ValueError) as e:
         log.warning(
             "Failed to derive host src IP (%s); using manual DNSMASQ_ADDRESS_IP=%s",
             e,
@@ -313,7 +317,7 @@ def get_built_caddy_version() -> str:
         return "not-built"
     try:
         return run([str(CADDY), "version"]).strip()
-    except Exception:
+    except RuntimeError:
         return "unknown"
 
 
@@ -334,7 +338,7 @@ def check_caddy_update_status() -> dict[str, Any]:
         try:
             run([str(CADDY), "upgrade", "--help"])
             native_upgrade_supported = True
-        except Exception:
+        except RuntimeError:
             native_upgrade_supported = False
     try:
         latest = get_latest_caddy_version()
@@ -361,7 +365,7 @@ def check_caddy_update_status() -> dict[str, Any]:
 def get_app_version() -> str:
     try:
         return importlib.metadata.version("certify-reverse")
-    except Exception:
+    except importlib.metadata.PackageNotFoundError:
         return "unknown"
 
 
@@ -461,7 +465,7 @@ def format_caddyfile_content(content: str) -> str:
             text=True,
             check=False,
         )
-    except Exception:
+    except OSError:
         return content
 
     if p.returncode == 0 and p.stdout.strip():
@@ -483,8 +487,8 @@ def format_caddyfile_in_place(path: Path) -> None:
         )
         if p.returncode == 0:
             log.debug("Formatted Caddyfile in place: %s", hl(path))
-    except Exception:
-        pass
+    except OSError as e:
+        log.debug("Failed to format Caddyfile in place %s: %s", hl(path), e)
 
 
 def prepare_caddy_runtime_env() -> None:
@@ -702,7 +706,7 @@ def copy_ca_to_service_directories(cfg: ReverseProxyConfig) -> None:
 def auto_export_ca_certificates(cfg: ReverseProxyConfig) -> None:
     try:
         export_caddy_internal_certs()
-    except Exception as e:
+    except RuntimeError as e:
         log.warning("Automatic CA export failed (normal on first startup): %s", e)
     copy_ca_to_service_directories(cfg)
 
@@ -736,7 +740,7 @@ def generate_internal_service_certs(cfg: ReverseProxyConfig) -> None:
                 ]
             )
             log.info("Generated internal service cert for %s", service_name)
-        except Exception as e:
+        except RuntimeError as e:
             log.warning("Failed to generate service certificate for %s: %s", service_name, e)
 
 
@@ -753,7 +757,7 @@ def run_extensions(cfg: ReverseProxyConfig) -> None:
                 ext.issue(u)
             else:
                 log.debug("Certificate for %s ok – expires %s", u.subdomain, ext.status(u))
-        except Exception as e:
+        except (ImportError, AttributeError, TypeError, RuntimeError) as e:
             log.error("Extension %s failed on %s: %s", u.ext_name, u.subdomain, e)
 
 
@@ -790,7 +794,7 @@ def write_status_assets(cfg: ReverseProxyConfig) -> None:
     }
     try:
         crtsh_state = fetch_crtsh_state(cfg.domain)
-    except Exception as e:
+    except (URLError, TimeoutError, json.JSONDecodeError) as e:
         log.warning("crt.sh query failed for %s: %s", hl(cfg.domain), e)
         crtsh_state = {
             "domain": cfg.domain,
@@ -815,7 +819,7 @@ def write_static_assets() -> None:
             .joinpath("static", "favicon.ico")
             .read_bytes()
         )
-    except Exception as e:
+    except (FileNotFoundError, ModuleNotFoundError, OSError) as e:
         log.warning("Static favicon asset unavailable: %s", e)
         return
 
@@ -888,7 +892,7 @@ def main(rebuild: bool = False, show_certs: bool = False, print_caddyfile: bool 
         if cert_info:
             instructions_content = render_upstream_tls_setup_guide(cert_info)
             log_if_changed(DATADIR / "upstream-tls-setup.md", instructions_content, "upstream-tls-setup.md")
-    except Exception as e:
+    except RuntimeError as e:
         log.warning("Failed to auto-export CA certificate: %s", e)
 
     auto_export_ca_certificates(cfg)
@@ -974,8 +978,7 @@ def entrypoint() -> None:
         log.error(
             "Quick start: cp .env.example .env && cp upstreams.yml.example upstreams.yml"
         )
-        # Exit cleanly to avoid restart loops for static setup errors.
-        sys.exit(0)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

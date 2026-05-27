@@ -190,10 +190,22 @@ Update checks now also report whether the built Caddy binary exposes a native `u
 ./caddy-docker.sh verify
 ```
 
-## Docs
+## End-User Docs
 
-- [Architecture](/home/user/code/certify-reverse/docs/architecture.md)
-- [Configuration](/home/user/code/certify-reverse/docs/configuration.md)
-- [Operations](/home/user/code/certify-reverse/docs/operations.md)
-- [Review](/home/user/code/certify-reverse/docs/review.md)
-- [Changelog](/home/user/code/certify-reverse/CHANGELOG.md)
+- Quick start: [`docs/getting-started.md`](docs/getting-started.md)
+- Configuration: [`docs/configuration.md`](docs/configuration.md)
+- Operations: [`docs/operations.md`](docs/operations.md)
+- Troubleshooting: [`docs/troubleshooting.md`](docs/troubleshooting.md)
+- Architecture: [`docs/architecture.md`](docs/architecture.md)
+- Changelog: [`CHANGELOG.md`](CHANGELOG.md)
+
+Docs site build (local):
+
+```bash
+uvx --from mkdocs-material mkdocs serve
+```
+
+Docs site deploy (GitHub Pages):
+
+- Push to `main`.
+- GitHub Actions workflow `docs-pages.yml` builds and publishes docs automatically.

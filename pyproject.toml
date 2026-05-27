@@ -13,6 +13,11 @@ dependencies = [
     "rich>=14.0.0",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
 [project.scripts]
 certify-reverse = "certify_reverse.cli:entrypoint"
 certify-reverse-status = "certify_reverse.status_cli:main"

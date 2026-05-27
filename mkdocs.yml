@@ -1,0 +1,16 @@
+site_name: certify-reverse
+site_description: End-user guide for certify-reverse
+repo_url: https://github.com/your-org/certify-reverse
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.sections
+    - content.code.copy
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Configuration: configuration.md
+  - Operations: operations.md
+  - Troubleshooting: troubleshooting.md
+  - Architecture: architecture.md

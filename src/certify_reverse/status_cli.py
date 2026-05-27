@@ -21,7 +21,7 @@ except ImportError:
     sys.exit(1)
 
 # Import our app modules
-from .cli import DATADIR, ReverseProxyConfig, configure_logging
+from .cli import DATADIR, ReverseProxyConfig, InvalidSetupError, configure_logging
 
 console = Console()
 log = logging.getLogger(__name__)
@@ -77,7 +77,7 @@ def show_configuration_status():
         
         console.print()
         
-    except Exception as e:
+    except (InvalidSetupError, OSError, ValueError) as e:
         console.print(Panel(f"❌ Failed to load configuration: {e}", title="Configuration Error", style="red"))
 
 
@@ -146,7 +146,7 @@ def show_service_directories():
         console.print(Panel(tree, title="Service Directory Structure"))
         console.print()
         
-    except Exception as e:
+    except (InvalidSetupError, OSError, ValueError) as e:
         console.print(Panel(f"❌ Failed to scan service directories: {e}", title="Directory Error", style="red"))
 
 
@@ -170,7 +170,7 @@ def show_data_directory_overview():
                     size = item.stat().st_size
                     icon = "⚙️" if item.suffix in [".yml", ".yaml", ".conf"] else "📄"
                     tree.add(f"{icon} {item.name} ({size} bytes)", style="green")
-        except Exception as e:
+        except OSError as e:
             tree.add(f"❌ Error reading directory: {e}", style="red")
     else:
         tree.add("❌ Data directory not found", style="red")

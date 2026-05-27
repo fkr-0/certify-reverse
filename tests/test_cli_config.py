@@ -12,6 +12,7 @@ from certify_reverse.cli import (
     InvalidSetupError,
     derive_dnsmasq_address_ip,
     env_first,
+    is_ipv4,
     load_env_file,
     load_upstreams,
     must_env,
@@ -117,7 +118,7 @@ class CliConfigTests(unittest.TestCase):
 
     def test_derive_dnsmasq_address_ip_host_src_ip_fallback(self):
         with (
-            mock.patch("subprocess.check_output", side_effect=RuntimeError("ip failed")),
+            mock.patch("subprocess.check_output", side_effect=OSError("ip failed")),
             mock.patch.object(cli.log, "warning"),
         ):
             out = derive_dnsmasq_address_ip("host-src-ip", "10.0.0.1")
@@ -135,6 +136,11 @@ class CliConfigTests(unittest.TestCase):
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = old
+
+    def test_is_ipv4_rejects_invalid_octets(self):
+        self.assertFalse(is_ipv4("999.999.999.999"))
+        self.assertFalse(is_ipv4("256.1.1.1"))
+        self.assertTrue(is_ipv4("192.168.1.1"))
 
 
 if __name__ == "__main__":
