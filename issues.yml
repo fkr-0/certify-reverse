@@ -1,0 +1,132 @@
+schema_version: 1
+project: certify-reverse
+reviewed_for: 0.5.2
+reviewed_at: 2026-07-18
+
+issues:
+  - id: CR-001
+    title: Live DNS-01 provider integration matrix
+    status: open
+    severity: high
+    size: large
+    area: integration-testing
+    rationale: >-
+      Current tests validate generation and Compose behavior without issuing a
+      real certificate against provider APIs. Reliable coverage needs isolated
+      zones, securely injected credentials, rate-limit handling, and cleanup for
+      every supported Caddy DNS provider.
+    acceptance_criteria:
+      - Run opt-in certificate issuance against at least two provider sandboxes.
+      - Verify propagation, renewal, credential-field variants, and cleanup.
+      - Keep credentials out of logs, artifacts, forks, and pull requests.
+
+  - id: CR-002
+    title: Dashboard authentication and metadata exposure policy
+    status: open
+    severity: high
+    size: large
+    area: security
+    rationale: >-
+      The status host intentionally exposes service reachability, certificate
+      history, configured hostnames, and operator email. A production-safe
+      solution needs an explicit threat model rather than an implicit public
+      dashboard.
+    acceptance_criteria:
+      - Define public, private-network, and authenticated deployment profiles.
+      - Add optional authentication and network allow-listing.
+      - Make email and topology publication independently configurable.
+      - Add security-focused browser and Caddy route tests.
+
+  - id: CR-003
+    title: Formalize or remove trust-extension plugin API
+    status: open
+    severity: medium
+    size: large
+    area: architecture
+    rationale: >-
+      Runtime imports support trust_ext modules, but the repository does not
+      define a stable protocol, bundled implementation, packaging entry point,
+      lifecycle contract, or end-to-end test fixture.
+    acceptance_criteria:
+      - Publish a typed extension protocol and compatibility policy.
+      - Replace ad-hoc module imports with explicit entry-point discovery.
+      - Provide one maintained reference implementation and failure-isolation tests.
+      - Alternatively remove the unsupported configuration surface in a major release.
+
+  - id: CR-004
+    title: Reproducible Caddy and container supply chain
+    status: open
+    severity: high
+    size: large
+    area: supply-chain
+    rationale: >-
+      Runtime xcaddy builds and container images can resolve moving tags or
+      plugin revisions. Fully reproducible releases require coordinated pinning,
+      provenance, update automation, and vulnerability review.
+    acceptance_criteria:
+      - Pin container images by digest and Caddy/plugin modules by immutable version.
+      - Generate SBOM and provenance artifacts for application and Caddy binaries.
+      - Add automated dependency update and vulnerability scanning policy.
+      - Document emergency rebuild and rollback procedures.
+
+  - id: CR-005
+    title: End-to-end dual-stack wildcard DNS
+    status: open
+    severity: medium
+    size: large
+    area: networking
+    rationale: >-
+      Reverse-proxy upstreams now render IPv6 literals correctly, but generated
+      dnsmasq wildcard answers and host-source discovery remain IPv4-only.
+    acceptance_criteria:
+      - Model independent A and AAAA targets.
+      - Discover and validate host IPv6 source addresses safely.
+      - Test IPv4-only, IPv6-only, and dual-stack Compose deployments.
+      - Document router advertisements, firewalling, and split-DNS behavior.
+
+  - id: CR-006
+    title: Credential-free continuous integration and release publication
+    status: open
+    severity: medium
+    size: large
+    area: release-engineering
+    rationale: >-
+      Local verification is comprehensive, but the repository has no dedicated
+      code CI or automated signed release pipeline. Designing one requires
+      registry, signing, permissions, and protected-environment decisions.
+    acceptance_criteria:
+      - Run the frozen verification matrix on supported Python versions.
+      - Build and attest Python and container artifacts once per release.
+      - Publish only from protected version tags after changelog/version checks.
+      - Add rollback and failed-publication recovery documentation.
+
+  - id: CR-007
+    title: Expiry-aware service-certificate lifecycle
+    status: open
+    severity: medium
+    size: large
+    area: certificates
+    rationale: >-
+      Internal service certificates are generated during bootstrap without a
+      complete idempotency, rotation, revocation, or consumer-reload lifecycle.
+    acceptance_criteria:
+      - Skip regeneration while certificates are healthy.
+      - Rotate before expiry with atomic files and bounded permissions.
+      - Notify or reload dependent services after successful rotation.
+      - Test interrupted rotation, rollback, and revoked-certificate handling.
+
+  - id: CR-008
+    title: Select and publish a project license
+    status: open
+    severity: high
+    size: large
+    area: governance
+    rationale: >-
+      The repository currently has no LICENSE file or package license metadata.
+      Choosing the license is an owner/legal policy decision and cannot be made
+      safely as an implementation-only change.
+    acceptance_criteria:
+      - Select a license compatible with bundled dependencies and intended use.
+      - Add the canonical LICENSE text and pyproject package metadata.
+      - Document third-party notices and contribution licensing expectations.
+      - Confirm release and container publication policy with the project owner.
