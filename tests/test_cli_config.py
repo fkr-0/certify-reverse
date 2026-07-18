@@ -37,6 +37,18 @@ class CliConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(InvalidSetupError, "Invalid environment key"):
                 load_env_file(p)
 
+    def test_atomic_text_write_preserves_existing_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "state.json"
+            p.write_text("old", encoding="utf-8")
+            p.chmod(0o640)
+
+            cli._atomic_write_text(p, "new")
+
+            self.assertEqual(p.read_text(encoding="utf-8"), "new")
+            self.assertEqual(p.stat().st_mode & 0o777, 0o640)
+            self.assertEqual(list(p.parent.glob(f".{p.name}.*.tmp")), [])
+
     def test_load_upstreams_top_level_mapping(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / "upstreams.yml"
@@ -81,6 +93,17 @@ class CliConfigTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(InvalidSetupError, "Invalid fields"):
+                load_upstreams(p)
+
+    def test_load_upstreams_rejects_normalized_name_collisions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "upstreams.yml"
+            p.write_text(
+                "App:\n  ip: 10.0.0.1\n  port: 8080\n"
+                "app:\n  ip: 10.0.0.2\n  port: 8081\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(InvalidSetupError, "normalize to the same name"):
                 load_upstreams(p)
 
     def test_load_env_file_overrides_preexisting_env(self):
@@ -191,6 +214,42 @@ class CliConfigTests(unittest.TestCase):
                 domain="example.com",
                 caddy_version="",
             )
+
+    def test_reverse_proxy_config_rejects_non_version_caddy_reference(self):
+        with self.assertRaisesRegex(InvalidSetupError, "semantic version"):
+            cli.ReverseProxyConfig(
+                dns_provider="desec",
+                dns_token="secret",
+                email="admin@example.com",
+                domain="example.com",
+                caddy_version="--output",
+            )
+
+    def test_reverse_proxy_config_normalizes_bare_caddy_version(self):
+        cfg = cli.ReverseProxyConfig(
+            dns_provider="desec",
+            dns_token="secret",
+            email="admin@example.com",
+            domain="example.com",
+            caddy_version="2.10.0",
+        )
+        self.assertEqual(cfg.caddy_version, "v2.10.0")
+
+    def test_reverse_proxy_config_uses_provider_credential_default(self):
+        desec = cli.ReverseProxyConfig(
+            dns_provider="desec",
+            dns_token="secret",
+            email="admin@example.com",
+            domain="example.com",
+        )
+        unknown = cli.ReverseProxyConfig(
+            dns_provider="custom-provider",
+            dns_token="secret",
+            email="admin@example.com",
+            domain="example.com",
+        )
+        self.assertEqual(desec.dns_token_field, "token")
+        self.assertEqual(unknown.dns_token_field, "api_token")
 
 
 if __name__ == "__main__":

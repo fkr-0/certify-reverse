@@ -52,10 +52,7 @@ def render_caddy(cfg: "ReverseProxyConfig") -> str:
     ]
     for upstream in cfg.upstreams:
         status_lines.append(f"    handle_path /probe/{upstream.subdomain}/* " + "{")
-        status_lines.append(
-            f"        reverse_proxy {upstream.scheme}://{upstream.ip}:{upstream.port} "
-            + "{"
-        )
+        status_lines.append(f"        reverse_proxy {_render_upstream_target(upstream)} " + "{")
         if upstream.forward_auth_headers:
             status_lines.append("            header_up X-Real-IP {remote}")
         if upstream.is_https:
@@ -73,16 +70,18 @@ def render_caddy(cfg: "ReverseProxyConfig") -> str:
     )
     blocks.append("\n".join(status_lines))
 
-    # Internal certificate server for services to get their certs
+    # Internal root-CA distribution endpoint. The CA certificate is public
+    # trust material; private keys are never exposed from this route.
     blocks.append(textwrap.dedent(f"""
     # Internal certificate distribution endpoint
     internal-ca.{cfg.domain} {{
         {tls_block}
-        handle /cert/* {{
-            reverse_proxy localhost:2021
+        handle_path /cert/* {{
+            root * /data/exported-certs
+            file_server
         }}
         handle {{
-            respond "Caddy Internal CA Service" 200
+            respond "Use /cert/caddy-internal-ca.pem or /cert/caddy-internal-ca.crt" 404
         }}
     }}
     """))
@@ -188,13 +187,17 @@ Caddy's internal root CA has been exported to:
 - **PEM format**: `{cert_info['ca_cert_pem']}`
 - **CRT format**: `{cert_info['ca_cert_crt']}`
 
-## ⚠️ Certificate Expiration Notice
+## Certificate Expiration Notice
 
-**Important**: This CA certificate expires in **25 years** from creation.
-- **Root CA**: 25 year lifetime
-- **Intermediate CA**: 5 year lifetime (auto-renewed by Caddy)
-- **Monitor expiration**: Use `caddy pki ca list` to check status
-- **Renewal**: When root CA expires, export new certificates and update all services
+The actual CA lifetime depends on the Caddy version and PKI configuration.
+Inspect the exported certificate rather than relying on a fixed assumed lifetime:
+
+```bash
+openssl x509 -in {cert_info['ca_cert_pem']} -noout -subject -issuer -dates -fingerprint -sha256
+```
+
+When the root CA changes or approaches expiry, redistribute the new certificate
+and update every dependent trust store.
 
 ## Configure Your Upstream Services
 

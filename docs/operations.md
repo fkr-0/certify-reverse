@@ -57,4 +57,10 @@ do not require Docker. `verify` is the release gate and checks:
 - base and Caddyfile-print Compose configurations.
 
 The `config` command redacts keys containing `TOKEN`, `SECRET`, `PASSWORD`,
-`API_KEY`, or `PRIVATE_KEY` before printing `.env` and `upstreams.yml`.
+`API_KEY`, or `PRIVATE_KEY` before printing `.env` and `upstreams.yml`. Both
+underscore and hyphen spellings are recognized, and complete YAML block-scalar
+secret bodies are suppressed.
+
+Runtime-generated configuration, status, dashboard, CA, and static-asset files
+use same-directory atomic replacement. Service certificate generation stages
+both outputs first and installs private keys with mode `0600`.

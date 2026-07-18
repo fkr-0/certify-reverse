@@ -4,6 +4,57 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-07-18
+
+### Added
+
+- Explicit installed-versus-requested Caddy version checks for pinned
+  `CADDY_VERSION` values, including prerelease versions.
+- Regression coverage for normalized upstream-name collisions, pinned Caddy
+  versions, staged service-certificate writes, private-key permissions, and
+  multiline YAML-secret redaction.
+
+### Changed
+
+- Generated Caddyfiles, status JSON, dashboard HTML, CA exports, and static
+  assets are now replaced atomically to avoid partially written runtime files.
+- Internal service certificates are generated into staging files, validated as
+  non-empty, and only then installed as the active certificate and key.
+- `CADDY_VERSION` now accepts only `latest` or a semantic version such as
+  `v2.10.0`, preventing accidental option-like or malformed build references.
+- `issues.yml` was refreshed for the remaining certificate-lifecycle work after
+  adding staged writes and bounded file permissions.
+
+### Fixed
+
+- Changing a pinned `CADDY_VERSION` now rebuilds an existing Caddy binary even
+  when the requested DNS provider plugin is already installed.
+- Case-only and trailing-dot upstream names that normalize to the same DNS name
+  are rejected before duplicate Caddy blocks or shared service directories are
+  generated.
+- Malformed GitHub release responses and additional crt.sh/network decoding
+  failures no longer abort runtime status generation.
+- Dashboard probe routes now bracket IPv6 literals just like normal upstream
+  proxy routes.
+- The internal-CA host now serves exported public CA files directly instead of
+  proxying to an undocumented, normally absent `localhost:2021` listener.
+- The generated TLS setup guide no longer states fixed root/intermediate CA
+  lifetimes and instead provides an `openssl` inspection command.
+- `--print-caddyfile` now keeps stdout configuration-only by sending runtime
+  logs to stderr, so redirection produces a valid Caddyfile.
+- deSEC now defaults to its actual `token` Caddyfile directive instead of the
+  incompatible generic `api_token` fallback; unknown providers remain
+  configurable and retain the previous fallback.
+- YAML block-scalar secrets are fully suppressed by `caddy-docker.sh config`
+  without hiding the non-secret fields that follow them.
+
+### Security
+
+- Generated internal service private keys are installed with mode `0600`;
+  corresponding certificates use mode `0644`.
+- YAML redaction now recognizes both underscore and hyphen spellings of API and
+  private-key fields and suppresses complete `|`/`>` block scalar bodies.
+
 ## [0.5.2] - 2026-07-18
 
 ### Added

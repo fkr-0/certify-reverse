@@ -112,9 +112,54 @@ class ComposeIntegrationTests(unittest.TestCase):
                 f"stderr:\n{proc.stderr}"
             )
 
-        output = proc.stdout + "\n" + proc.stderr
-        self.assertIn(f"status.{domain}", output)
-        self.assertIn(f"{first_subdomain}.{domain}", output)
+        self.assertTrue(proc.stdout.lstrip().startswith("{"), proc.stdout)
+        self.assertIn(f"status.{domain}", proc.stdout)
+        self.assertIn(f"{first_subdomain}.{domain}", proc.stdout)
+
+    def test_generated_caddyfile_validates_with_bundled_caddy(self):
+        cmd = [
+            "docker",
+            "compose",
+            "-f",
+            "docker/docker-compose.yml",
+            "run",
+            "--rm",
+            "--no-deps",
+            "-v",
+            f"{self.root / 'src'}:/checkout/src:ro",
+            "-e",
+            "PYTHONPATH=/checkout/src",
+            "--entrypoint",
+            "python3",
+            "caddy",
+            "-c",
+            "import os, subprocess; "
+            "from pathlib import Path; "
+            "from certify_reverse.cli import CADDY, ReverseProxyConfig; "
+            "from certify_reverse.templates import render_caddy, set_datadir; "
+            "set_datadir(Path('/data')); "
+            "cfg = ReverseProxyConfig.from_sources(); "
+            "os.environ['CADDY_DNS_PLUGIN'] = cfg.dns_provider; "
+            "os.environ['CADDY_DNS_PLUGIN_TOKEN'] = cfg.dns_token; "
+            "Path('/tmp/Caddyfile').write_text(render_caddy(cfg), encoding='utf-8'); "
+            "subprocess.run([str(CADDY), 'validate', '--config', '/tmp/Caddyfile', "
+            "'--adapter', 'caddyfile'], check=True)",
+        ]
+        proc = subprocess.run(
+            cmd,
+            cwd=self.root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=600,
+            check=False,
+        )
+
+        self.assertEqual(
+            proc.returncode,
+            0,
+            f"stdout:\n{proc.stdout}\n\nstderr:\n{proc.stderr}",
+        )
 
     def test_env_file_overrides_inherited_caddy_version(self):
         root = self.root

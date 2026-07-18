@@ -15,6 +15,8 @@ Caddy reverse-proxy bootstrapper with DNS-01 automation, runtime plugin manageme
 - Provider-specific credential keys through `CADDY_DNS_PLUGIN_TOKEN_FIELD`.
 - Strict configuration validation before files or service directories are written.
 - Optional pinned Caddy version via `CADDY_VERSION` (default `latest`).
+- Automatic rebuild when an existing Caddy binary does not match an explicitly
+  pinned `CADDY_VERSION`.
 - Diff logging when generated files change (stdout + rotating file logger).
 - Fallback runtime override with `/data/Caddyfile.overwrite`.
 - Built-vs-latest Caddy update check.
@@ -41,13 +43,15 @@ Caddy reverse-proxy bootstrapper with DNS-01 automation, runtime plugin manageme
 cp .env.example .env
 ```
 
-The selected Caddy DNS plugin may use a different credential field. The default
-matches providers using `api_token`:
+The selected Caddy DNS plugin may use a different credential field. Known
+provider defaults are applied when the setting is omitted; deSEC uses `token`,
+while unknown providers retain the `api_token` fallback. Override it explicitly
+when the plugin documentation requires another directive:
 
 ```env
 DNS_PROVIDER=desec
 DNS_TOKEN=REPLACE_WITH_DNS_API_TOKEN
-CADDY_DNS_PLUGIN_TOKEN_FIELD=api_token
+CADDY_DNS_PLUGIN_TOKEN_FIELD=token
 DOMAIN=example.com
 ```
 
@@ -166,6 +170,12 @@ CADDY_VERSION=latest
 CADDY_VERSION=v2.10.2
 ```
 
+Pinned values must be semantic versions, optionally prefixed with `v` and with
+an optional prerelease/build suffix. When a pinned version differs from the
+installed binary, startup rebuilds Caddy even if the DNS plugin already exists.
+`latest` keeps the installed compatible binary and uses the update-check command
+for advisory release discovery.
+
 - Optionally set Docker builder base image for `./caddy-docker.sh build`:
 
 ```env
@@ -201,6 +211,15 @@ The dashboard can also query live crt.sh via Caddy proxy endpoint:
 - This avoids browser CORS issues against `crt.sh` directly.
 
 Update checks now also report whether the built Caddy binary exposes a native `upgrade` command.
+
+Generated runtime text/JSON/static files are replaced atomically. Internal
+service certificates are staged before installation, with private keys written
+as owner-only (`0600`) and public certificates as `0644`.
+
+The exported internal root CA can be retrieved from the generated
+`internal-ca.<domain>` host at `/cert/caddy-internal-ca.pem` or
+`/cert/caddy-internal-ca.crt`. This endpoint serves only public trust material;
+service private keys are never routed by Caddy.
 
 ## Verification
 

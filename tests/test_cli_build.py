@@ -38,6 +38,18 @@ class CliBuildTests(unittest.TestCase):
         self.assertIsNone(status["recommended"])
         self.assertIn("offline", status["error"])
 
+    def test_explicit_caddy_version_must_match_installed_binary(self):
+        with mock.patch.object(cli, "get_built_caddy_version", return_value="v2.10.0 h1:abc"):
+            self.assertTrue(cli.caddy_matches_requested_version("v2.10.0"))
+            self.assertTrue(cli.caddy_matches_requested_version("2.10.0"))
+            self.assertFalse(cli.caddy_matches_requested_version("v2.10.1"))
+            self.assertTrue(cli.caddy_matches_requested_version("latest"))
+
+    def test_prerelease_caddy_version_requires_exact_match(self):
+        with mock.patch.object(cli, "get_built_caddy_version", return_value="v2.11.0-beta.1"):
+            self.assertTrue(cli.caddy_matches_requested_version("v2.11.0-beta.1"))
+            self.assertFalse(cli.caddy_matches_requested_version("v2.11.0-beta.2"))
+
     def test_build_caddy_uses_writable_caches_and_replaces_binary_atomically(self):
         old_work = cli.WORK
         old_caddy = cli.CADDY

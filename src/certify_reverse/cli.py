@@ -22,9 +22,11 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
+from http.client import HTTPException
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -70,9 +72,23 @@ _C_RESET = "\033[0m"
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PROVIDER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+_CADDY_VERSION_RE = re.compile(
+    r"^(?:latest|v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$"
+)
+_DNS_TOKEN_FIELD_DEFAULTS = {
+    "desec": "token",
+}
 _HOST_LABEL_RE = re.compile(r"^[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?$")
 _DNS_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+$")
+_STATUS_LOOKUP_ERRORS = (
+    URLError,
+    TimeoutError,
+    OSError,
+    HTTPException,
+    ValueError,
+    UnicodeDecodeError,
+)
 
 
 class StripAnsiFormatter(logging.Formatter):
@@ -87,6 +103,44 @@ class InvalidSetupError(Exception):
 
 def hl(value: Any) -> str:
     return f"{_C_HL}{value}{_C_RESET}"
+
+
+def _atomic_write_text(path: Path, content: str, *, mode: int | None = None) -> None:
+    """Replace a text file atomically using a temporary file in the same directory."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if mode is not None:
+            tmp_path.chmod(mode)
+        elif path.exists():
+            tmp_path.chmod(path.stat().st_mode & 0o777)
+        os.replace(tmp_path, path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def _atomic_write_bytes(path: Path, content: bytes, *, mode: int | None = None) -> None:
+    """Replace a binary file atomically using a temporary file in the same directory."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if mode is not None:
+            tmp_path.chmod(mode)
+        elif path.exists():
+            tmp_path.chmod(path.stat().st_mode & 0o777)
+        os.replace(tmp_path, path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def _validated_dns_name(value: str, label: str, *, allow_underscore: bool = False) -> str:
@@ -114,6 +168,11 @@ def _validated_upstream_host(value: str) -> str:
         return _validated_dns_name(normalized, "upstream ip/host", allow_underscore=True)
 
 
+def default_dns_token_field(provider: str) -> str:
+    """Return the known Caddyfile credential directive for a DNS provider."""
+    return _DNS_TOKEN_FIELD_DEFAULTS.get(provider.lower(), "api_token")
+
+
 def configure_logging() -> None:
     global _LOG_CONFIGURED
     if _LOG_CONFIGURED:
@@ -131,15 +190,15 @@ def configure_logging() -> None:
         rot.setFormatter(StripAnsiFormatter(LOGFMT))
         log.addHandler(rot)
 
-    console = logging.StreamHandler(sys.stdout)
+    console = logging.StreamHandler(sys.stderr)
     console.setFormatter(logging.Formatter(LOGFMT))
     log.addHandler(console)
 
     _LOG_CONFIGURED = True
     if file_logging_ready:
-        log.info("Logging initialized - output to stdout and %s", LOGDIR / "app.log")
+        log.info("Logging initialized - output to stderr and %s", LOGDIR / "app.log")
     else:
-        log.warning("Logging initialized in console-only mode (cannot write %s)", LOGDIR)
+        log.warning("Logging initialized in stderr-only mode (cannot write %s)", LOGDIR)
 
 
 @dataclass(slots=True)
@@ -195,7 +254,7 @@ class ReverseProxyConfig:
     email: str
     domain: str
     caddy_version: str = "latest"
-    dns_token_field: str = "api_token"
+    dns_token_field: str = ""
     dnsmasq_address_mode: str = "manual"
     dnsmasq_address_ip: str = "10.0.0.1"
     upstreams: list[Upstream] = field(default_factory=list)
@@ -208,20 +267,26 @@ class ReverseProxyConfig:
         self.dns_provider = self.dns_provider.lower()
         if not isinstance(self.dns_token, str) or not self.dns_token:
             raise InvalidSetupError("DNS_TOKEN must not be empty")
-        if not isinstance(self.dns_token_field, str) or not _IDENTIFIER_RE.fullmatch(
-            self.dns_token_field
-        ):
+        if not isinstance(self.dns_token_field, str):
+            raise InvalidSetupError("CADDY_DNS_PLUGIN_TOKEN_FIELD must be a Caddy identifier")
+        self.dns_token_field = self.dns_token_field.strip()
+        if not self.dns_token_field:
+            self.dns_token_field = default_dns_token_field(self.dns_provider)
+        if not _IDENTIFIER_RE.fullmatch(self.dns_token_field):
             raise InvalidSetupError("CADDY_DNS_PLUGIN_TOKEN_FIELD must be a Caddy identifier")
         if not isinstance(self.email, str) or not _EMAIL_RE.fullmatch(self.email.strip()):
             raise InvalidSetupError("ACME_EMAIL must be a valid email address")
         self.email = self.email.strip()
         self.domain = _validated_dns_name(self.domain, "DOMAIN")
-        if (
-            not isinstance(self.caddy_version, str)
-            or not self.caddy_version
-            or any(ch.isspace() or ord(ch) < 32 for ch in self.caddy_version)
-        ):
-            raise InvalidSetupError("CADDY_VERSION must be a single version token")
+        if not isinstance(self.caddy_version, str):
+            raise InvalidSetupError("CADDY_VERSION must be a version string")
+        self.caddy_version = self.caddy_version.strip()
+        if not _CADDY_VERSION_RE.fullmatch(self.caddy_version):
+            raise InvalidSetupError(
+                "CADDY_VERSION must be 'latest' or a semantic version such as v2.10.0"
+            )
+        if self.caddy_version != "latest" and not self.caddy_version.startswith("v"):
+            self.caddy_version = f"v{self.caddy_version}"
         if not is_ipv4(self.dnsmasq_address_ip):
             raise InvalidSetupError("DNSMASQ_ADDRESS_IP must resolve to a valid IPv4 address")
 
@@ -236,7 +301,7 @@ class ReverseProxyConfig:
         caddy_version = os.getenv("CADDY_VERSION", "latest").strip() or "latest"
         dns_token_field = env_first(
             "CADDY_DNS_PLUGIN_TOKEN_FIELD",
-            default="api_token",
+            default="",
         )
         dnsmasq_address_mode = env_first(
             "DNSMASQ_ADDRESS_MODE",
@@ -400,15 +465,23 @@ def load_upstreams(path: Path) -> list[Upstream]:
         raise InvalidSetupError("upstreams.yml must contain a top-level mapping")
 
     upstreams: list[Upstream] = []
+    normalized_subdomains: dict[str, str] = {}
     for subdomain, spec in data.items():
         if not isinstance(subdomain, str):
             raise InvalidSetupError("Every upstream key must be a string subdomain")
         if not isinstance(spec, dict):
             raise InvalidSetupError(f"Upstream '{subdomain}' must be an object")
         try:
-            upstreams.append(Upstream(subdomain=subdomain, **spec))
+            upstream = Upstream(subdomain=subdomain, **spec)
         except TypeError as e:
             raise InvalidSetupError(f"Invalid fields for upstream '{subdomain}': {e}") from e
+        previous = normalized_subdomains.get(upstream.subdomain)
+        if previous is not None:
+            raise InvalidSetupError(
+                f"Upstream subdomains {previous!r} and {subdomain!r} normalize to the same name"
+            )
+        normalized_subdomains[upstream.subdomain] = subdomain
+        upstreams.append(upstream)
 
     return upstreams
 
@@ -436,7 +509,12 @@ def get_latest_caddy_version() -> str:
     )
     with urlopen(req, timeout=10) as r:
         payload = json.loads(r.read().decode("utf-8"))
-    return str(payload.get("tag_name", "unknown"))
+    if not isinstance(payload, dict):
+        raise ValueError("GitHub release response is not an object")
+    tag_name = payload.get("tag_name")
+    if not isinstance(tag_name, str) or not _CADDY_VERSION_RE.fullmatch(tag_name):
+        raise ValueError("GitHub release response does not contain a valid Caddy version")
+    return tag_name
 
 
 def check_caddy_update_status() -> dict[str, Any]:
@@ -450,7 +528,7 @@ def check_caddy_update_status() -> dict[str, Any]:
             native_upgrade_supported = False
     try:
         latest = get_latest_caddy_version()
-    except (URLError, TimeoutError, OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+    except _STATUS_LOOKUP_ERRORS as e:
         return {
             "built": built,
             "latest": "unavailable",
@@ -490,6 +568,24 @@ def caddy_has_plugin(provider: str) -> bool:
         return False
     expected = f"dns.providers.{provider}"
     return any(module.strip() == expected for module in mods)
+
+
+def caddy_matches_requested_version(requested_version: str) -> bool:
+    """Return whether the installed Caddy satisfies an explicit requested version."""
+    if requested_version == "latest":
+        return True
+    built_version = get_built_caddy_version()
+    requested = requested_version.removeprefix("v")
+    match = re.search(
+        r"\bv?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)\b",
+        built_version,
+    )
+    if match is None:
+        return False
+    built = match.group(1)
+    if "-" in requested or "+" in requested:
+        return built == requested
+    return semver_tuple(built) == semver_tuple(requested)
 
 
 def build_caddy(dns_provider: str, caddy_version: str = "latest") -> None:
@@ -561,7 +657,7 @@ def log_if_changed(path: Path, new_content: str, title: str) -> None:
     else:
         log.info("%s created -> %s", title, hl(path))
 
-    path.write_text(new_content, encoding="utf-8")
+    _atomic_write_text(path, new_content)
 
 
 def format_caddyfile_content(content: str) -> str:
@@ -703,7 +799,7 @@ def write_status_json(path: Path, payload: dict[str, Any], title: str) -> None:
     if new_content == old_content:
         log.info("%s unchanged -> %s", title, hl(path))
         return
-    path.write_text(new_content, encoding="utf-8")
+    _atomic_write_text(path, new_content)
     log.info("%s updated -> %s", title, hl(path))
 
 
@@ -775,8 +871,8 @@ def auto_export_internal_ca() -> dict[str, str] | None:
                 ca_content = ca_path.read_text(encoding="utf-8")
                 pem = cert_export_dir / "caddy-internal-ca.pem"
                 crt = cert_export_dir / "caddy-internal-ca.crt"
-                pem.write_text(ca_content, encoding="utf-8")
-                crt.write_text(ca_content, encoding="utf-8")
+                _atomic_write_text(pem, ca_content, mode=0o644)
+                _atomic_write_text(crt, ca_content, mode=0o644)
                 return {
                     "ca_cert_pem": str(pem),
                     "ca_cert_crt": str(crt),
@@ -847,7 +943,14 @@ def generate_internal_service_certs(cfg: ReverseProxyConfig) -> None:
             continue
         service_name = f"{upstream.subdomain}.{cfg.domain}"
         cert_path = service_certs_dir / upstream.subdomain
-        cert_path.mkdir(parents=True, exist_ok=True)
+        cert_path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        cert_path.chmod(0o700)
+        cert_tmp = cert_path / f".cert.pem.{os.getpid()}.tmp"
+        key_tmp = cert_path / f".key.pem.{os.getpid()}.tmp"
+        cert_final = cert_path / "cert.pem"
+        key_final = cert_path / "key.pem"
+        cert_tmp.unlink(missing_ok=True)
+        key_tmp.unlink(missing_ok=True)
         try:
             run(
                 [
@@ -861,14 +964,25 @@ def generate_internal_service_certs(cfg: ReverseProxyConfig) -> None:
                     "--host",
                     upstream.ip,
                     "--out-cert",
-                    str(cert_path / "cert.pem"),
+                    str(cert_tmp),
                     "--out-key",
-                    str(cert_path / "key.pem"),
+                    str(key_tmp),
                 ]
             )
+            if not cert_tmp.exists() or cert_tmp.stat().st_size == 0:
+                raise RuntimeError("Caddy did not produce a non-empty service certificate")
+            if not key_tmp.exists() or key_tmp.stat().st_size == 0:
+                raise RuntimeError("Caddy did not produce a non-empty service private key")
+            cert_tmp.chmod(0o644)
+            key_tmp.chmod(0o600)
+            os.replace(cert_tmp, cert_final)
+            os.replace(key_tmp, key_final)
             log.info("Generated internal service cert for %s", service_name)
         except RuntimeError as e:
             log.warning("Failed to generate service certificate for %s: %s", service_name, e)
+        finally:
+            cert_tmp.unlink(missing_ok=True)
+            key_tmp.unlink(missing_ok=True)
 
 
 def run_extensions(cfg: ReverseProxyConfig) -> None:
@@ -922,7 +1036,7 @@ def write_status_assets(cfg: ReverseProxyConfig) -> None:
     }
     try:
         crtsh_state = fetch_crtsh_state(cfg.domain)
-    except (URLError, TimeoutError, json.JSONDecodeError) as e:
+    except _STATUS_LOOKUP_ERRORS as e:
         log.warning("crt.sh query failed for %s: %s", hl(cfg.domain), e)
         crtsh_state = {
             "domain": cfg.domain,
@@ -956,7 +1070,7 @@ def write_static_assets() -> None:
         log.info("favicon.ico unchanged -> %s", hl(favicon_path))
         return
 
-    favicon_path.write_bytes(favicon_bytes)
+    _atomic_write_bytes(favicon_path, favicon_bytes, mode=0o644)
     log.info("favicon.ico updated -> %s", hl(favicon_path))
 
 
@@ -1001,7 +1115,16 @@ def main(rebuild: bool = False, show_certs: bool = False, print_caddyfile: bool 
         print(caddyfile_content)
         return
 
-    if rebuild or not CADDY.exists() or not caddy_has_plugin(cfg.dns_provider):
+    caddy_exists = CADDY.exists()
+    plugin_matches = caddy_exists and caddy_has_plugin(cfg.dns_provider)
+    version_matches = caddy_exists and caddy_matches_requested_version(cfg.caddy_version)
+    if rebuild or not caddy_exists or not plugin_matches or not version_matches:
+        if caddy_exists and not version_matches:
+            log.info(
+                "Existing Caddy version %s does not match requested %s; rebuilding",
+                hl(get_built_caddy_version()),
+                hl(cfg.caddy_version),
+            )
         build_caddy(cfg.dns_provider, cfg.caddy_version)
     else:
         log.info(

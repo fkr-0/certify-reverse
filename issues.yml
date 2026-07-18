@@ -1,6 +1,6 @@
 schema_version: 1
 project: certify-reverse
-reviewed_for: 0.5.2
+reviewed_for: 0.5.3
 reviewed_at: 2026-07-18
 
 issues:
@@ -107,11 +107,12 @@ issues:
     size: large
     area: certificates
     rationale: >-
-      Internal service certificates are generated during bootstrap without a
-      complete idempotency, rotation, revocation, or consumer-reload lifecycle.
+      Internal service certificates now use staged non-empty writes and bounded
+      certificate/key permissions, but still lack a complete idempotency,
+      expiry, rotation, revocation, and consumer-reload lifecycle.
     acceptance_criteria:
       - Skip regeneration while certificates are healthy.
-      - Rotate before expiry with atomic files and bounded permissions.
+      - Rotate before expiry with a coordinated certificate/key pair swap.
       - Notify or reload dependent services after successful rotation.
       - Test interrupted rotation, rollback, and revoked-certificate handling.
 

@@ -21,7 +21,7 @@ log_error() { echo -e "${RED}❌ $1${NC}"; }
 is_sensitive_key() {
   local upper_key="${1^^}"
   case "$upper_key" in
-    *TOKEN*|*SECRET*|*PASSWORD*|*API_KEY*|*PRIVATE_KEY*) return 0 ;;
+    *TOKEN*|*SECRET*|*PASSWORD*|*API_KEY*|*API-KEY*|*PRIVATE_KEY*|*PRIVATE-KEY*) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -44,10 +44,31 @@ redact_env_file() {
 
 redact_yaml_file() {
   local path="$1"
+  local redacted_block_indent=-1
   while IFS= read -r line || [[ -n "$line" ]]; do
+    if (( redacted_block_indent >= 0 )); then
+      if [[ -z "${line//[[:space:]]/}" ]]; then
+        printf '\n'
+        continue
+      fi
+      local current_indent=0
+      if [[ "$line" =~ ^([[:space:]]*) ]]; then
+        current_indent="${#BASH_REMATCH[1]}"
+      fi
+      if (( current_indent > redacted_block_indent )); then
+        continue
+      fi
+      redacted_block_indent=-1
+    fi
     if [[ "$line" =~ ^([[:space:]]*)([A-Za-z_][A-Za-z0-9_-]*)[[:space:]]*:[[:space:]]*(.*)$ ]] \
       && is_sensitive_key "${BASH_REMATCH[2]}"; then
-      printf '%s%s: ***REDACTED***\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+      local sensitive_indent="${#BASH_REMATCH[1]}"
+      local sensitive_key="${BASH_REMATCH[2]}"
+      local sensitive_value="${BASH_REMATCH[3]}"
+      printf '%s%s: ***REDACTED***\n' "${line:0:sensitive_indent}" "$sensitive_key"
+      if [[ "$sensitive_value" =~ ^[\>\|] ]]; then
+        redacted_block_indent="$sensitive_indent"
+      fi
     else
       printf '%s\n' "$line"
     fi

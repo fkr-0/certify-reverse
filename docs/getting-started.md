@@ -18,7 +18,8 @@ Edit `.env` with at least:
 - `DOMAIN`
 - `DNS_PROVIDER`
 - `DNS_TOKEN`
-- `CADDY_DNS_PLUGIN_TOKEN_FIELD` (usually `api_token`; some plugins use `token`)
+- `CADDY_DNS_PLUGIN_TOKEN_FIELD` (deSEC uses `token`; other plugins may use
+  `api_token` or another documented directive)
 - `ACME_EMAIL`
 
 ## 2) Define Upstreams

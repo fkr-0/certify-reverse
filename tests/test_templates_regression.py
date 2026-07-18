@@ -113,6 +113,13 @@ class TemplatesRegressionTests(unittest.TestCase):
 
         caddyfile = render_caddy(_CfgIpv6())
         self.assertIn("reverse_proxy http://[2001:db8::10]:8080", caddyfile)
+        self.assertEqual(caddyfile.count("reverse_proxy http://[2001:db8::10]:8080"), 2)
+
+    def test_internal_ca_endpoint_serves_exported_public_ca_files(self):
+        caddyfile = render_caddy(_Cfg())
+        self.assertIn("handle_path /cert/*", caddyfile)
+        self.assertIn("root * /data/exported-certs", caddyfile)
+        self.assertNotIn("reverse_proxy localhost:2021", caddyfile)
 
     def test_render_dnsmasq_logs_to_data_logs(self):
         conf = render_dnsmasq(_Cfg())

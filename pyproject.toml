@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "certify-reverse"
-version = "0.5.2"
+version = "0.5.3"
 description = "Caddy reverse proxy bootstrapper with DNS plugin automation"
 readme = "README.md"
 requires-python = ">=3.11"

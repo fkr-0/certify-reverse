@@ -37,7 +37,7 @@ class ShellHelperTests(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), "0.5.2")
+            self.assertEqual(result.stdout.strip(), "0.5.3")
 
     def test_config_command_redacts_secret_values(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -75,6 +75,47 @@ class ShellHelperTests(unittest.TestCase):
             self.assertIn("DNS_TOKEN=***REDACTED***", result.stdout)
             self.assertIn("api_key: ***REDACTED***", result.stdout)
             self.assertIn("DOMAIN=example.com", result.stdout)
+
+    def test_config_command_redacts_yaml_block_secrets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            script = root / "caddy-docker.sh"
+            shutil.copy2(ROOT / "caddy-docker.sh", script)
+            shutil.copy2(ROOT / "pyproject.toml", root / "pyproject.toml")
+            (root / ".env").write_text("DOMAIN=example.com\n", encoding="utf-8")
+            (root / "upstreams.yml").write_text(
+                "app:\n"
+                "  ip: backend\n"
+                "  port: 8080\n"
+                "  ext_params:\n"
+                "    private_key: |\n"
+                "      -----BEGIN PRIVATE KEY-----\n"
+                "      do-not-print-block-secret\n"
+                "      -----END PRIVATE KEY-----\n"
+                "    label: visible\n",
+                encoding="utf-8",
+            )
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            _link_commands(bin_dir, "cat", "dirname", "id", "sed")
+            fake_docker = bin_dir / "docker"
+            fake_docker.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake_docker.chmod(0o755)
+
+            result = subprocess.run(
+                ["/bin/bash", str(script), "config"],
+                cwd=root,
+                env={"PATH": str(bin_dir)},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("do-not-print-block-secret", result.stdout)
+            self.assertNotIn("BEGIN PRIVATE KEY", result.stdout)
+            self.assertIn("private_key: ***REDACTED***", result.stdout)
+            self.assertIn("label: visible", result.stdout)
 
 
 if __name__ == "__main__":
