@@ -1,0 +1,87 @@
+:root {
+  --md-primary-fg-color: #234fc4;
+  --md-accent-fg-color: #1769e0;
+  --cr-card-border: color-mix(in srgb, var(--md-default-fg-color) 18%, transparent);
+}
+
+.md-grid {
+  max-width: 76rem;
+}
+
+.md-typeset {
+  font-size: 0.82rem;
+  line-height: 1.65;
+}
+
+.md-typeset h1 {
+  font-weight: 760;
+  letter-spacing: -0.025em;
+}
+
+.md-typeset h2 {
+  margin-top: 1.8em;
+  font-weight: 720;
+  letter-spacing: -0.015em;
+}
+
+.md-typeset h3 {
+  font-weight: 680;
+}
+
+.md-typeset code {
+  border-radius: 0.25rem;
+}
+
+.md-typeset .grid.cards > ul > li,
+.md-typeset .grid.cards > ol > li {
+  border: 1px solid var(--cr-card-border);
+  border-radius: 0.75rem;
+  box-shadow: 0 0.35rem 1.2rem color-mix(in srgb, var(--md-default-fg-color) 7%, transparent);
+}
+
+.md-typeset .admonition,
+.md-typeset details {
+  border-radius: 0.6rem;
+}
+
+.md-typeset table:not([class]) {
+  display: table;
+  width: 100%;
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.md-typeset .result {
+  margin: 1rem 0;
+  padding: 0.8rem 1rem;
+  border-left: 0.2rem solid #14804a;
+  border-radius: 0.4rem;
+  background: color-mix(in srgb, #14804a 9%, var(--md-default-bg-color));
+}
+
+.md-typeset .command-purpose {
+  color: var(--md-default-fg-color--light);
+  font-size: 0.78rem;
+}
+
+@media screen and (max-width: 44.984375em) {
+  .md-typeset {
+    font-size: 0.88rem;
+  }
+
+  .md-typeset table:not([class]) {
+    display: block;
+    overflow-x: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

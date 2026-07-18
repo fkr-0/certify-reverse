@@ -1,17 +1,104 @@
 site_name: certify-reverse
-site_description: End-user guide for certify-reverse
-repo_url: https://github.com/your-org/certify-reverse
+site_description: Beginner-friendly guide and operator reference for certify-reverse
+site_url: https://fkr-0.github.io/certify-reverse/
+repo_url: https://github.com/fkr-0/certify-reverse
+repo_name: fkr-0/certify-reverse
+edit_uri: edit/main/docs/
+copyright: certify-reverse documentation
+strict: true
+
+site_dir: dist/docs/site
+
 theme:
   name: material
+  language: en
+  favicon: assets/favicon.ico
   features:
     - navigation.instant
+    - navigation.instant.progress
     - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
     - content.code.copy
+    - content.code.annotate
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: light-blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+
+plugins:
+  - search:
+      lang: en
+      separator: '[\\s\\-\\.]+'
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      title: On this page
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.snippets:
+      base_path:
+        - .
+        - docs
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+extra_css:
+  - assets/site.css
+
 nav:
-  - Home: index.md
-  - Getting Started: getting-started.md
-  - Case Study (deSEC + AdGuard + http.server): case-study-desec-adguard-httpserver.md
-  - Configuration: configuration.md
-  - Operations: operations.md
-  - Troubleshooting: troubleshooting.md
-  - Architecture: architecture.md
+  - Start here:
+      - Welcome: index.md
+      - Core concepts: concepts.md
+      - 15-minute quickstart: getting-started.md
+  - Tutorials:
+      - WordPress + Telegram webhook: tutorials/wordpress-telegram.md
+      - deSEC + AdGuard + Python service: case-study-desec-adguard-httpserver.md
+  - Use and operate:
+      - Configuration: configuration.md
+      - Command reference: cli-reference.md
+      - Dashboard: dashboard.md
+      - Operations: operations.md
+      - Troubleshooting: troubleshooting.md
+  - Understand and contribute:
+      - Architecture: architecture.md
+      - Documentation publishing: publishing.md
+      - Architecture review: review.md
+
+not_in_nav: |
+  /reference/*.1.md

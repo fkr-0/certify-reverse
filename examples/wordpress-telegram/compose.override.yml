@@ -1,0 +1,43 @@
+services:
+  wordpress-db:
+    image: mariadb:11.4
+    environment:
+      MARIADB_DATABASE: ${WORDPRESS_DB_NAME:-wordpress}
+      MARIADB_USER: ${WORDPRESS_DB_USER:-wordpress}
+      MARIADB_PASSWORD: ${WORDPRESS_DB_PASSWORD:-change-me}
+      MARIADB_ROOT_PASSWORD: ${WORDPRESS_DB_ROOT_PASSWORD:-change-root-me}
+    volumes:
+      - wordpress-db-data:/var/lib/mysql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - healthcheck.sh --connect --innodb_initialized
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  wordpress:
+    image: wordpress:6-php8.3-apache
+    environment:
+      WORDPRESS_DB_HOST: wordpress-db:3306
+      WORDPRESS_DB_NAME: ${WORDPRESS_DB_NAME:-wordpress}
+      WORDPRESS_DB_USER: ${WORDPRESS_DB_USER:-wordpress}
+      WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD:-change-me}
+    depends_on:
+      wordpress-db:
+        condition: service_healthy
+    volumes:
+      - wordpress-data:/var/www/html
+    restart: unless-stopped
+
+  telegram-bot:
+    build:
+      context: ../examples/wordpress-telegram/telegram-bot
+    environment:
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-change-me}
+    restart: unless-stopped
+
+volumes:
+  wordpress-db-data:
+  wordpress-data:

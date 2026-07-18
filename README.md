@@ -32,6 +32,8 @@ Caddy reverse-proxy bootstrapper with DNS-01 automation, runtime plugin manageme
 - `docker/docker-compose.yml`: runtime stack.
 - `docker/docker-compose.caddyfile.yml`: print generated Caddyfile and exit.
 - `caddy-docker.sh`: operational + versioning helper script.
+- `tools/docs/`: pinned static-site, handbook, PDF, and man-page publishing pipeline.
+- `examples/`: runnable quickstart and WordPress/Telegram Compose overlays.
 - `.env.example`, `upstreams.yml.example`: config templates.
 - `CHANGELOG.md`: release history.
 - `issues.yml`: known larger work intentionally deferred from the current release.
@@ -243,19 +245,39 @@ configurations.
 ## End-User Docs
 
 - Quick start: [`docs/getting-started.md`](docs/getting-started.md)
+- Core concepts: [`docs/concepts.md`](docs/concepts.md)
+- WordPress + Telegram tutorial: [`docs/tutorials/wordpress-telegram.md`](docs/tutorials/wordpress-telegram.md)
 - Configuration: [`docs/configuration.md`](docs/configuration.md)
+- Command reference: [`docs/cli-reference.md`](docs/cli-reference.md)
 - Operations: [`docs/operations.md`](docs/operations.md)
 - Troubleshooting: [`docs/troubleshooting.md`](docs/troubleshooting.md)
 - Architecture: [`docs/architecture.md`](docs/architecture.md)
+- Documentation publishing: [`docs/publishing.md`](docs/publishing.md)
 - Changelog: [`CHANGELOG.md`](CHANGELOG.md)
 
-Docs site build (local):
+Build all documentation formats:
 
 ```bash
-uvx --from mkdocs-material mkdocs serve
+./caddy-docker.sh docs
 ```
 
-Docs site deploy (GitHub Pages):
+Outputs under `dist/docs/` include a searchable MkDocs site, standalone HTML
+handbook, A4 PDF handbook, plain and compressed man pages, a build manifest, and
+a deterministic archive.
+
+Preview the site while editing:
+
+```bash
+./caddy-docker.sh docs-serve
+```
+
+Run strict release validation:
+
+```bash
+./caddy-docker.sh docs-check
+```
+
+GitHub Pages deployment:
 
 - Push to `main`.
 - GitHub Actions workflow `docs-pages.yml` builds and publishes docs automatically.

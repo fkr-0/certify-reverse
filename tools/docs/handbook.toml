@@ -1,0 +1,25 @@
+title = "certify-reverse Handbook"
+subtitle = "Beginner guide, operations manual, and reference"
+
+chapters = [
+  "docs/index.md",
+  "docs/concepts.md",
+  "docs/getting-started.md",
+  "docs/tutorials/wordpress-telegram.md",
+  "docs/case-study-desec-adguard-httpserver.md",
+  "docs/configuration.md",
+  "docs/cli-reference.md",
+  "docs/dashboard.md",
+  "docs/operations.md",
+  "docs/troubleshooting.md",
+  "docs/architecture.md",
+  "docs/publishing.md",
+]
+
+[[man_pages]]
+source = "docs/reference/certify-reverse.1.md"
+output = "certify-reverse.1"
+
+[[man_pages]]
+source = "docs/reference/caddy-docker.1.md"
+output = "caddy-docker.1"

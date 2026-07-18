@@ -1,0 +1,20 @@
+services:
+  demo:
+    image: python:3.13-slim
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        mkdir -p /srv
+        cat > /srv/index.html <<'HTML'
+        <!doctype html>
+        <html lang="en">
+          <head><meta charset="utf-8"><title>certify-reverse quickstart</title></head>
+          <body>
+            <h1>Hello from certify-reverse</h1>
+            <p>Caddy successfully reached the demo service over the Compose network.</p>
+          </body>
+        </html>
+        HTML
+        exec python3 -m http.server 8080 --bind 0.0.0.0 --directory /srv
+    restart: unless-stopped

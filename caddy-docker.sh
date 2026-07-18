@@ -164,6 +164,12 @@ Runtime commands:
 
 Project commands:
   verify
+  docs
+  docs-check
+  docs-site
+  docs-serve
+  docs-clean
+  docs-update-lock
   version
   bump-patch
   bump-minor
@@ -285,7 +291,12 @@ clean_all() {
 
 verify_project() {
   cd "$SCRIPT_DIR"
-  python3 -m py_compile src/certify_reverse/cli.py src/certify_reverse/status_cli.py src/certify_reverse/templates.py
+  python3 -m py_compile \
+    src/certify_reverse/cli.py \
+    src/certify_reverse/status_cli.py \
+    src/certify_reverse/status_page.py \
+    src/certify_reverse/templates.py \
+    tools/docs/build.py
   python3 - <<'PY'
 import re
 import tomllib
@@ -301,8 +312,8 @@ PY
   if command -v uv >/dev/null 2>&1; then
     uv sync --frozen --group dev
     uv run --frozen --group dev pytest -q
-    uv run --frozen --group dev ruff check src tests scripts
-    uv run --frozen --group dev mypy src/certify_reverse scripts/bump_version.py
+    uv run --frozen --group dev ruff check src tests scripts tools examples/wordpress-telegram/telegram-bot/app.py
+    uv run --frozen --group dev mypy src/certify_reverse scripts/bump_version.py tools/docs/build.py
     local build_dir
     build_dir="$(mktemp -d)"
     uv build --out-dir "$build_dir" >/dev/null
@@ -313,10 +324,22 @@ PY
   fi
   bash -n caddy-docker.sh
   sh -n boot.sh
+  sh -n examples/wordpress-telegram/register-webhook.sh
   compose config >/dev/null
   compose_caddyfile config >/dev/null
+  compose -f examples/quickstart/compose.override.yml config >/dev/null
+  compose --env-file examples/wordpress-telegram/.env.example \
+    -f examples/wordpress-telegram/compose.override.yml config >/dev/null
+  python3 tools/docs/build.py check
   log_success "Verification passed"
 }
+
+build_docs() { cd "$SCRIPT_DIR"; python3 tools/docs/build.py build; }
+check_docs() { cd "$SCRIPT_DIR"; python3 tools/docs/build.py check; }
+build_docs_site() { cd "$SCRIPT_DIR"; python3 tools/docs/build.py site; }
+serve_docs() { cd "$SCRIPT_DIR"; python3 tools/docs/build.py serve; }
+clean_docs() { cd "$SCRIPT_DIR"; python3 tools/docs/build.py clean; }
+update_docs_lock() { cd "$SCRIPT_DIR"; python3 tools/docs/build.py update-lock; }
 
 show_version() { project_version; }
 bump_patch() { cd "$SCRIPT_DIR"; python3 scripts/bump_version.py patch; }
@@ -334,6 +357,12 @@ main() {
   local command="${1:-}"
   case "$command" in
     version) show_version; return ;;
+    docs) build_docs; return ;;
+    docs-check) check_docs; return ;;
+    docs-site) build_docs_site; return ;;
+    docs-serve) serve_docs; return ;;
+    docs-clean) clean_docs; return ;;
+    docs-update-lock) update_docs_lock; return ;;
     bump-patch) bump_patch; return ;;
     bump-minor) bump_minor; return ;;
     bump-major) bump_major; return ;;

@@ -1,0 +1,124 @@
+@page {
+  size: A4;
+  margin: 18mm 17mm 20mm;
+  @bottom-center {
+    content: "certify-reverse handbook · " counter(page) " / " counter(pages);
+    color: #667085;
+    font-size: 8.5pt;
+  }
+}
+
+:root {
+  --ink: #182230;
+  --muted: #566273;
+  --line: #d9e0ea;
+  --accent: #1957d2;
+  --accent-soft: #edf3ff;
+  --code: #f4f6f9;
+  font-family: "DejaVu Sans", "Noto Sans", sans-serif;
+  color: var(--ink);
+  line-height: 1.55;
+}
+
+body {
+  max-width: 54rem;
+  margin: 0 auto;
+  font-size: 10.5pt;
+}
+
+h1, h2, h3, h4 {
+  color: #101828;
+  line-height: 1.2;
+  break-after: avoid;
+}
+
+h1 {
+  margin-top: 0;
+  padding-bottom: 0.22em;
+  border-bottom: 2px solid var(--accent);
+  font-size: 24pt;
+}
+
+h2 { margin-top: 1.5em; font-size: 17pt; }
+h3 { font-size: 13pt; }
+h4 { font-size: 11pt; }
+
+p, li { orphans: 3; widows: 3; }
+a { color: var(--accent); text-decoration: none; }
+blockquote {
+  margin: 1em 0;
+  padding: 0.7em 1em;
+  border-left: 4px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--muted);
+}
+
+pre, code, kbd {
+  font-family: "DejaVu Sans Mono", "Noto Sans Mono", monospace;
+}
+
+code {
+  padding: 0.08em 0.28em;
+  border-radius: 0.25em;
+  background: var(--code);
+}
+
+pre {
+  padding: 0.9em 1em;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  border: 1px solid var(--line);
+  border-radius: 0.45em;
+  background: var(--code);
+  font-size: 8.4pt;
+  break-inside: avoid-page;
+}
+
+pre code { padding: 0; background: transparent; }
+
+table {
+  width: 100%;
+  margin: 1em 0;
+  border-collapse: collapse;
+  font-size: 9pt;
+}
+
+th, td {
+  padding: 0.48em 0.55em;
+  border: 1px solid var(--line);
+  vertical-align: top;
+}
+
+th { background: #edf1f7; text-align: left; }
+
+img, svg { max-width: 100%; }
+
+nav#TOC {
+  margin: 1.4em 0 2em;
+  padding: 1em 1.2em;
+  border: 1px solid var(--line);
+  border-radius: 0.6em;
+  background: #fafbfd;
+}
+
+nav#TOC::before {
+  content: "Contents";
+  display: block;
+  margin-bottom: 0.6em;
+  font-size: 15pt;
+  font-weight: 700;
+}
+
+.page-break { break-before: page; }
+
+@media screen {
+  body { padding: 2rem; }
+}
+
+@media print {
+  a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    color: var(--muted);
+    font-size: 0.8em;
+  }
+}

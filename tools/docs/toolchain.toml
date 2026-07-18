@@ -1,0 +1,13 @@
+[python]
+version = "3.13"
+
+[renderers]
+pandoc = "3.1.3"
+weasyprint = "69.0"
+groff = "1.24.1"
+
+[outputs]
+site = "dist/docs/site"
+handbook_html = "dist/docs/certify-reverse-handbook.html"
+handbook_pdf = "dist/docs/certify-reverse-handbook.pdf"
+man_dir = "dist/docs/man"
