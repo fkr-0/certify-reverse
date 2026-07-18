@@ -17,14 +17,15 @@ Caddy reverse-proxy bootstrapper with DNS-01 automation, runtime plugin manageme
 - Optional pinned Caddy version via `CADDY_VERSION` (default `latest`).
 - Automatic rebuild when an existing Caddy binary does not match an explicitly
   pinned `CADDY_VERSION`.
-- Diff logging when generated files change (stdout + rotating file logger).
+- Diff logging when generated files change (stderr + rotating file logger).
 - Fallback runtime override with `/data/Caddyfile.overwrite`.
 - Built-vs-latest Caddy update check.
 
 ## Project Structure
 
 - `src/certify_reverse/cli.py`: runtime bootstrapper and primary CLI.
-- `src/certify_reverse/templates.py`: Caddy/dnsmasq/dashboard templating.
+- `src/certify_reverse/templates.py`: Caddy/dnsmasq configuration templating.
+- `src/certify_reverse/status_page.py`: self-contained operational dashboard UI.
 - `src/certify_reverse/status_cli.py`: terminal status UI.
 - `pyproject.toml`: packaging and script entrypoints.
 - `docker/Dockerfile`: image build.
@@ -195,11 +196,18 @@ CADDY_BUILDER_IMAGE=caddy:2.10.0-builder
 ## Dashboard Output
 
 Generated `/data/index.html` includes:
-- service links,
-- ping/check-cert actions backed by server-side probe endpoints on `status.<domain>`,
-- operational metadata (email, provider, built/latest caddy version),
-- ACME state summary from `/data/acme-state.json`.
-- crt.sh certificate history table sourced from `/data/crtsh-state.json` on page load.
+- an operational overview with service, reachability, TLS, and Caddy-version metrics,
+- searchable service links and explicit ping/TLS actions backed by server-side
+  probe endpoints on `status.<domain>`,
+- a readable ACME state summary plus optional raw JSON,
+- searchable crt.sh certificate history sourced from `/data/crtsh-state.json`,
+- live crt.sh refresh through the Caddy proxy endpoint,
+- system/light/dark themes, responsive layouts, keyboard-visible focus, and
+  reduced-motion support.
+
+The dashboard uses semantic landmarks and native tables, includes a skip link,
+announces asynchronous status changes, and keeps controls at least 44 px high.
+See [`docs/dashboard.md`](docs/dashboard.md) for workflows and limitations.
 
 Startup also queries `crt.sh` for the configured domain and logs:
 - match count,

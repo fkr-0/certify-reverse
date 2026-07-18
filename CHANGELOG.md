@@ -4,6 +4,57 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-07-18
+
+### Added
+
+- A redesigned operational overview with service, reachability, TLS-check, and
+  Caddy-version summary metrics.
+- Search/filter controls for configured services and crt.sh certificate
+  history, with browser-safe rendering capped at 200 matching history rows.
+- A persisted system/light/dark theme selector that still respects the browser
+  color-scheme preference by default.
+- Dedicated accessible status regions for service checks, certificate queries,
+  ACME loading, filters, and global operation results.
+- JavaScript syntax regression coverage and dashboard checks for landmarks,
+  focus visibility, target sizing, reduced motion, table semantics, and safe DOM
+  rendering.
+- `docs/dashboard.md` describing dashboard workflows, accessibility behavior,
+  limitations, and keyboard operation.
+
+### Changed
+
+- Reworked the generated dashboard into task-oriented Overview, Services,
+  Certificates, ACME, and System sections instead of a dense metadata-first
+  collection of cards.
+- Moved the self-contained dashboard implementation into
+  `certify_reverse.status_page`, keeping Caddy/dnsmasq templates focused on
+  infrastructure configuration.
+- Service actions now use descriptive text labels, explicit busy/disabled
+  states, bounded request timeouts, and a single "Run all checks" workflow.
+- Certificate history now exposes a stable, curated column set rather than
+  generating arbitrary columns from remote response keys.
+- ACME state now presents a readable summary before an optional raw JSON detail
+  view.
+- Responsive service rows become labeled card-like records on narrow screens;
+  larger certificate tables retain deliberate horizontal scrolling.
+
+### Fixed
+
+- Added semantic header, navigation, main, section, table caption, column header,
+  row header, and footer structure for assistive technology navigation.
+- Added a keyboard-visible skip link and high-contrast `:focus-visible` treatment.
+- Increased interactive controls to at least 44 px and improved spacing between
+  adjacent actions.
+- Added `prefers-reduced-motion`, `prefers-color-scheme`, and
+  `prefers-contrast` adaptations.
+- Async JSON requests now validate HTTP status, time out with `AbortController`,
+  and surface actionable errors instead of silently parsing failed responses.
+- Service probes now fall back from unsupported `HEAD` requests to `GET` and
+  report HTTP response time consistently.
+- Removed dashboard use of `innerHTML` for runtime data, replacing it with DOM
+  construction and `textContent` updates.
+
 ## [0.5.3] - 2026-07-18
 
 ### Added

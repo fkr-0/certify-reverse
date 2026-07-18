@@ -1,4 +1,4 @@
-# Configuration (v0.5.3)
+# Configuration (v0.5.4)
 
 ## Files
 

@@ -37,7 +37,7 @@ class ShellHelperTests(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), "0.5.3")
+            self.assertEqual(result.stdout.strip(), "0.5.4")
 
     def test_config_command_redacts_secret_values(self):
         with tempfile.TemporaryDirectory() as tmp:

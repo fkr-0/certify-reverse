@@ -1,4 +1,8 @@
+import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -51,24 +55,63 @@ class TemplatesRegressionTests(unittest.TestCase):
             },
         )
 
-        self.assertIn("${e.message}", html)
+        self.assertIn("${error.message}", html)
         self.assertIn("status.example.com/probe/app/", html)
-        self.assertIn("Native Upgrade Cmd", html)
-        self.assertIn("certify-reverse v${appVer} Dashboard", html)
-        self.assertIn("certify-reverse commit:", html)
-        self.assertIn("crt.sh Certificate History", html)
-        self.assertIn("fetch('/crtsh-state.json'", html)
+        self.assertIn("Native upgrade", html)
+        self.assertIn("certify-reverse v${version}", html)
+        self.assertIn("Application commit", html)
+        self.assertIn("crt.sh history", html)
+        self.assertIn("fetchJson('/crtsh-state.json'", html)
         self.assertIn("/probe/crtsh?q=", html)
-        self.assertIn("crt.sh Status", html)
-        self.assertIn("Querying crt.sh status...", html)
-        self.assertIn("Latest Valid Until", html)
-        self.assertIn("Certificate Validity", html)
-        self.assertIn("Last Queried", html)
-        self.assertIn("↻ Refresh", html)
-        self.assertIn("<th>Ping</th>", html)
-        self.assertIn("<th>Cert</th>", html)
-        self.assertNotIn("<th>Status</th>", html)
-        self.assertNotIn("<th>Actions</th>", html)
+        self.assertIn("Certificate status", html)
+        self.assertIn("Loading local crt.sh snapshot…", html)
+        self.assertIn("Valid until", html)
+        self.assertIn("Validity", html)
+        self.assertIn("Last queried", html)
+        self.assertIn("Run all checks", html)
+        self.assertIn('<th scope="col">Ping</th>', html)
+        self.assertIn('<th scope="col">TLS</th>', html)
+        self.assertIn('<th scope="col">Actions</th>', html)
+
+    def test_status_dashboard_includes_accessible_modern_ui_patterns(self):
+        html = render_status_index_html(_Cfg(), {"domain": "example.com"})
+
+        self.assertIn('class="skip-link" href="#main-content"', html)
+        self.assertIn('<header class="site-header">', html)
+        self.assertIn('<main class="shell stack" id="main-content" tabindex="-1">', html)
+        self.assertIn('<nav class="section-nav" aria-label="Dashboard sections">', html)
+        self.assertIn('role="status" aria-atomic="true"', html)
+        self.assertIn('<caption>Configured reverse-proxy services', html)
+        self.assertIn("lastElementChild.scope = 'row'", html)
+        self.assertIn(':focus-visible', html)
+        self.assertIn('--control-height: 44px', html)
+        self.assertIn('@media (prefers-reduced-motion: reduce)', html)
+        self.assertIn('@media (prefers-color-scheme: dark)', html)
+        self.assertIn('id="theme-toggle"', html)
+        self.assertIn('id="service-filter" type="search"', html)
+        self.assertIn('id="history-filter" type="search"', html)
+        self.assertIn('AbortController', html)
+        self.assertIn('if (!response.ok)', html)
+        self.assertNotIn(".innerHTML", html)
+
+    def test_status_dashboard_inline_javascript_has_valid_syntax(self):
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node is unavailable")
+
+        html = render_status_index_html(_Cfg(), {"domain": "example.com"})
+        match = re.search(r"<script>(.*?)</script>", html, re.S)
+        self.assertIsNotNone(match)
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "dashboard.js"
+            script.write_text(match.group(1), encoding="utf-8")
+            result = subprocess.run(
+                [node, "--check", str(script)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_render_status_index_html_cannot_close_inline_script_from_metadata(self):
         html = render_status_index_html(
