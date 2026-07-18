@@ -9,6 +9,39 @@ import certify_reverse.cli as cli
 
 
 class CliExportTests(unittest.TestCase):
+    def test_intermediate_certificate_is_not_exported_as_root_ca(self):
+        old_datadir = cli.DATADIR
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                cli.DATADIR = Path(tmp)
+                pki = cli.DATADIR / "pki" / "ca" / "internal"
+                pki.mkdir(parents=True)
+                (pki / "intermediate.crt").write_text(
+                    "-----BEGIN CERTIFICATE-----\nintermediate\n-----END CERTIFICATE-----\n",
+                    encoding="utf-8",
+                )
+
+                self.assertIsNone(cli.auto_export_internal_ca())
+        finally:
+            cli.DATADIR = old_datadir
+
+    def test_existing_single_ca_format_repairs_missing_companion_file(self):
+        old_datadir = cli.DATADIR
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                cli.DATADIR = Path(tmp)
+                export_dir = cli.DATADIR / "exported-certs"
+                export_dir.mkdir(parents=True)
+                pem = export_dir / "caddy-internal-ca.pem"
+                pem.write_text("x" * 101, encoding="utf-8")
+
+                result = cli.auto_export_internal_ca()
+
+                self.assertIsNotNone(result)
+                self.assertEqual((export_dir / "caddy-internal-ca.crt").read_text(), "x" * 101)
+        finally:
+            cli.DATADIR = old_datadir
+
     def test_export_caddy_internal_certs_reads_from_storage(self):
         old_datadir = cli.DATADIR
         old_caddy = cli.CADDY

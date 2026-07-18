@@ -28,12 +28,12 @@ def render_caddy(cfg: "ReverseProxyConfig") -> str:
     # Global configuration block
     global_config = textwrap.dedent(f"""
     {{
-        email {cfg.email}
+        email {json.dumps(cfg.email)}
     }}
     """).strip()
 
     blocks = []
-    tls_block = _render_tls_block()
+    tls_block = _render_tls_block(cfg)
 
     # Dedicated status host with server-side probes for more reliable browser checks.
     status_lines = [
@@ -98,17 +98,17 @@ def render_caddy(cfg: "ReverseProxyConfig") -> str:
 
     # Specific upstream configurations
     for upstream in cfg.upstreams:
-        block = _render_upstream_block(upstream, cfg.domain)
+        block = _render_upstream_block(upstream, cfg)
         blocks.append(block)
 
     return "\n\n".join([global_config] + blocks)
 
 
-def _render_upstream_block(upstream: "Upstream", domain: str) -> str:
+def _render_upstream_block(upstream: "Upstream", cfg: "ReverseProxyConfig") -> str:
     """Render a single upstream configuration block."""
-    rp_target = f"{upstream.scheme}://{upstream.ip}:{upstream.port}"
-    block = [f"{upstream.subdomain}.{domain} " + "{"]
-    block.append(_render_tls_block())
+    rp_target = _render_upstream_target(upstream)
+    block = [f"{upstream.subdomain}.{cfg.domain} " + "{"]
+    block.append(_render_tls_block(cfg))
     block.append(f"    reverse_proxy {rp_target} " + "{")
 
     # Forward authentication headers if enabled
@@ -127,18 +127,28 @@ def _render_upstream_block(upstream: "Upstream", domain: str) -> str:
     return "\n".join(block)
 
 
-def _render_tls_block() -> str:
+def _render_upstream_target(upstream: "Upstream") -> str:
+    """Render an HTTP upstream target, including brackets for IPv6 literals."""
+    host = upstream.ip
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"{upstream.scheme}://{host}:{upstream.port}"
+
+
+def _render_tls_block(cfg: "ReverseProxyConfig") -> str:
     """Render a DNS-01 TLS config block with tuned propagation checks."""
-    return textwrap.dedent("""
-        tls {
-            dns {$CADDY_DNS_PLUGIN} {
-                api_token {$CADDY_DNS_PLUGIN_TOKEN}
-            }
+    return textwrap.dedent(
+        f"""
+        tls {{
+            dns {{$CADDY_DNS_PLUGIN}} {{
+                {cfg.dns_token_field} {{$CADDY_DNS_PLUGIN_TOKEN}}
+            }}
             propagation_delay 60s
             propagation_timeout 15m
             resolvers 1.1.1.1 8.8.8.8
-        }
-    """).strip()
+        }}
+        """
+    ).strip()
 
 
 def _render_transport_config(upstream: "Upstream") -> str:
@@ -147,11 +157,11 @@ def _render_transport_config(upstream: "Upstream") -> str:
         return "transport http { tls_insecure_skip_verify }"
     elif upstream.trust_pool:
         pool_file = Path(upstream.trust_pool).expanduser()
-        return f"transport http {{ tls_trust_pool file {pool_file} }}"
+        return f"transport http {{ tls_trust_pool file {json.dumps(str(pool_file))} }}"
     else:
         # Use exported Caddy CA for verification
         ca_cert_path = DATADIR / "exported-certs" / "caddy-internal-ca.pem"
-        return f"transport http {{ tls_trust_pool file {ca_cert_path} }}"
+        return f"transport http {{ tls_trust_pool file {json.dumps(str(ca_cert_path))} }}"
 
 
 def render_dnsmasq(cfg: "ReverseProxyConfig") -> str:
@@ -295,8 +305,8 @@ def render_status_index_html(cfg: "ReverseProxyConfig", public_meta: dict) -> st
         for u in cfg.upstreams
     ]
 
-    services_json = json.dumps(services)
-    meta_json = json.dumps(public_meta)
+    services_json = _json_for_inline_script(services)
+    meta_json = _json_for_inline_script(public_meta)
 
     return f"""<!doctype html>
 <html lang="en">
@@ -700,3 +710,15 @@ def render_status_index_html(cfg: "ReverseProxyConfig", public_meta: dict) -> st
 </body>
 </html>
 """
+
+
+def _json_for_inline_script(value: object) -> str:
+    """Serialize JSON without allowing values to terminate the script element."""
+    return (
+        json.dumps(value)
+        .replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )

@@ -4,6 +4,65 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-07-18
+
+### Added
+
+- Configurable DNS provider credential field via `CADDY_DNS_PLUGIN_TOKEN_FIELD`
+  (default: `api_token`).
+- Strict validation for domains, upstream names/hosts, schemes, ports, trust-pool
+  paths, extension names, environment keys, and dnsmasq address modes.
+- IPv6-literal rendering for reverse-proxy upstream targets.
+- Synchronized version regression tests and shell-helper security tests.
+- Compose integration tests mount and assert the current checkout source before
+  container assertions, preventing stale local images from producing false greens.
+- Ruff, Mypy, package-build, and lockfile checks in the release verification path.
+- End-user documentation site and deSEC + AdGuard + HTTP server case study.
+- `issues.yml` containing larger deferred architecture and integration work.
+
+### Changed
+
+- DNS provider/token values are exported consistently for generated Caddy
+  configuration, with configurable provider-specific credential syntax.
+- Compose config gives the Caddy service explicit public DNS resolvers for
+  DNS-01 propagation checks.
+- Version, bump, release-note, and tag helper commands no longer require a
+  Docker installation.
+- Docker builds now use the Go toolchain already supplied by the configured
+  Caddy builder image instead of pulling a redundant moving `golang:alpine` stage.
+- Alpine image creation now upgrades the expat runtime consistently and uses
+  `py3-virtualenv`, fixing current-base `ensurepip` and `pyexpat` failures.
+- The semantic-version bump helper now updates both `pyproject.toml` and
+  `certify_reverse.__version__`.
+- `verify` now validates synchronized versions, the frozen lockfile, tests,
+  lint, type checking, package builds, shell syntax, and both Compose models.
+
+### Fixed
+
+- Prevented crafted upstream names from escaping the `/data` service-directory
+  root or injecting invalid Caddy/dnsmasq configuration.
+- Caddy plugin detection now requires the exact module name rather than a
+  substring match.
+- Network timeouts, malformed release responses, and offline update checks no
+  longer abort runtime startup.
+- Existing CA exports now repair a missing PEM/CRT companion file.
+- Internal CA export no longer accepts an intermediate certificate as a root-CA
+  fallback.
+- Invalid YAML and unsupported upstream fields now produce concise
+  `InvalidSetupError` messages.
+- Corrected stale importable package version `0.3.5` to the release version.
+
+### Security
+
+- Added a restrictive `.dockerignore` so local secrets, runtime certificate
+  data, caches, Git history, and the runtime data directory are not sent to builders.
+- `caddy-docker.sh config` redacts token, secret, password, API-key, and
+  private-key values in both `.env` and `upstreams.yml` output.
+- The status CLI no longer reveals the final characters of the configured DNS
+  token.
+- Inline dashboard JSON escapes script-closing characters to prevent stored
+  script injection through rendered metadata.
+
 ## [0.5.1] - 2026-02-25
 
 ### Changed

@@ -1,4 +1,4 @@
-# Configuration (v0.3.0)
+# Configuration (v0.5.2)
 
 ## Files
 
@@ -15,6 +15,9 @@ Required:
 Optional:
 - `ACME_EMAIL` (default `admin@example.com`)
 - `CADDY_VERSION` (default `latest`)
+- `CADDY_DNS_PLUGIN_TOKEN_FIELD` (default `api_token`; some plugins use `token`)
+- `DNSMASQ_ADDRESS_MODE` (`manual`, `host-src-ip`, or `auto`)
+- `DNSMASQ_ADDRESS_IP` (valid IPv4 address or resolvable hostname)
 
 ## `upstreams.yml` schema
 
@@ -34,11 +37,15 @@ secure-app:
 ```
 
 Supported fields per subdomain object:
-- `ip` (required)
-- `port` (required)
+- `ip` (required IPv4, IPv6, or hostname target)
+- `port` (required integer, `1..65535`)
 - `scheme` (`http`/`https`, default `http`)
 - `skip_verify` (default `false`)
-- `trust_pool` (optional path)
+- `trust_pool` (optional absolute path)
 - `forward_auth_headers` (default `true`)
 - `ext_name` (optional trust extension)
 - `ext_params` (optional map)
+
+Top-level keys are validated DNS subdomains and cannot contain path separators,
+whitespace, or Caddyfile control characters. Unknown fields and malformed YAML
+fail startup with a concise configuration error.

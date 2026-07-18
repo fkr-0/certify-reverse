@@ -1,7 +1,5 @@
-import os
 import shutil
 import subprocess
-import sys
 import unittest
 from pathlib import Path
 
@@ -40,8 +38,46 @@ def _load_env(path: Path) -> dict[str, str]:
 
 @unittest.skipUnless(_docker_compose_available(), "docker compose not available")
 class ComposeIntegrationTests(unittest.TestCase):
+    root = Path(__file__).resolve().parents[1]
+
+    def _current_source_run(self, *python_args: str) -> list[str]:
+        return [
+            "docker",
+            "compose",
+            "-f",
+            "docker/docker-compose.yml",
+            "run",
+            "--rm",
+            "--no-deps",
+            "-v",
+            f"{self.root / 'src'}:/checkout/src:ro",
+            "-e",
+            "PYTHONPATH=/checkout/src",
+            "--entrypoint",
+            "python3",
+            "caddy",
+            *python_args,
+        ]
+
+    def test_container_imports_current_checkout_source(self):
+        proc = subprocess.run(
+            self._current_source_run(
+                "-c",
+                "import certify_reverse; print(certify_reverse.__file__)",
+            ),
+            cwd=self.root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("/checkout/src/certify_reverse/__init__.py", proc.stdout)
+
     def test_print_caddyfile_compose_run(self):
-        root = Path(__file__).resolve().parents[1]
+        root = self.root
         env_file = root / ".env"
         upstreams_file = root / "upstreams.yml"
 
@@ -57,17 +93,7 @@ class ComposeIntegrationTests(unittest.TestCase):
         self.assertGreater(len(upstreams_data), 0)
         first_subdomain = next(iter(upstreams_data.keys()))
 
-        cmd = [
-            "docker",
-            "compose",
-            "-f",
-            "docker/docker-compose.yml",
-            "-f",
-            "docker/docker-compose.caddyfile.yml",
-            "run",
-            "--rm",
-            "caddy",
-        ]
+        cmd = self._current_source_run("-m", "certify_reverse.cli", "--print-caddyfile")
         proc = subprocess.run(
             cmd,
             cwd=root,
@@ -91,7 +117,7 @@ class ComposeIntegrationTests(unittest.TestCase):
         self.assertIn(f"{first_subdomain}.{domain}", output)
 
     def test_env_file_overrides_inherited_caddy_version(self):
-        root = Path(__file__).resolve().parents[1]
+        root = self.root
         env_file = root / ".env"
         if not env_file.exists():
             self.skipTest(".env missing")
@@ -101,22 +127,12 @@ class ComposeIntegrationTests(unittest.TestCase):
         if not expected:
             self.skipTest("CADDY_VERSION missing in .env")
 
-        cmd = [
-            "docker",
-            "compose",
-            "-f",
-            "docker/docker-compose.yml",
-            "run",
-            "--rm",
-            "--no-deps",
-            "-e",
-            "CADDY_VERSION=v2.10.0",
-            "--entrypoint",
-            "python3",
-            "caddy",
+        cmd = self._current_source_run(
             "-c",
             "from certify_reverse.cli import ReverseProxyConfig; print(ReverseProxyConfig.from_sources().caddy_version)",
-        ]
+        )
+        caddy_index = cmd.index("caddy")
+        cmd[caddy_index:caddy_index] = ["-e", "CADDY_VERSION=v2.10.0"]
         proc = subprocess.run(
             cmd,
             cwd=root,

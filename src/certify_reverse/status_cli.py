@@ -5,8 +5,6 @@ Shows configuration, certificates, and directory structure in a nicely formatted
 """
 
 import sys
-from pathlib import Path
-from typing import Dict, List, Any
 import logging
 
 try:
@@ -14,7 +12,6 @@ try:
     from rich.table import Table
     from rich.panel import Panel
     from rich.tree import Tree
-    from rich.text import Text
     from rich import box
 except ImportError:
     print("❌ Rich library not found. Please install: pip install rich")
@@ -40,7 +37,7 @@ def show_configuration_status():
         config_table.add_row("Domain", cfg.domain)
         config_table.add_row("Email", cfg.email)
         config_table.add_row("DNS Provider", cfg.dns_provider)
-        config_table.add_row("DNS Token", f"{'*' * (len(cfg.dns_token) - 4)}{cfg.dns_token[-4:]}" if len(cfg.dns_token) > 4 else "***")
+        config_table.add_row("DNS Token", "*** configured")
         config_table.add_row("Total Upstreams", str(len(cfg.upstreams)))
         
         console.print(config_table)

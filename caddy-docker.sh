@@ -18,6 +18,42 @@ log_success() { echo -e "${GREEN}✅ $1${NC}"; }
 log_warn() { echo -e "${YELLOW}⚠️  $1${NC}"; }
 log_error() { echo -e "${RED}❌ $1${NC}"; }
 
+is_sensitive_key() {
+  local upper_key="${1^^}"
+  case "$upper_key" in
+    *TOKEN*|*SECRET*|*PASSWORD*|*API_KEY*|*PRIVATE_KEY*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+redact_env_file() {
+  local path="$1"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" != *=* || "$line" =~ ^[[:space:]]*# ]]; then
+      printf '%s\n' "$line"
+      continue
+    fi
+    local key="${line%%=*}"
+    if is_sensitive_key "$key"; then
+      printf '%s=***REDACTED***\n' "$key"
+    else
+      printf '%s\n' "$line"
+    fi
+  done < "$path"
+}
+
+redact_yaml_file() {
+  local path="$1"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^([[:space:]]*)([A-Za-z_][A-Za-z0-9_-]*)[[:space:]]*:[[:space:]]*(.*)$ ]] \
+      && is_sensitive_key "${BASH_REMATCH[2]}"; then
+      printf '%s%s: ***REDACTED***\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+    else
+      printf '%s\n' "$line"
+    fi
+  done < "$path"
+}
+
 check_docker_compose() {
   if command -v docker-compose >/dev/null 2>&1; then
     DOCKER_COMPOSE="docker-compose"
@@ -163,10 +199,18 @@ print_caddyfile() { compose_caddyfile run --rm caddy; }
 show_config() {
   log_info "Runtime configuration"
   echo "=== .env ==="
-  cat .env 2>/dev/null || log_warn ".env not found"
+  if [[ -f .env ]]; then
+    redact_env_file .env
+  else
+    log_warn ".env not found"
+  fi
   echo
   echo "=== upstreams.yml ==="
-  cat upstreams.yml 2>/dev/null || log_warn "upstreams.yml not found"
+  if [[ -f upstreams.yml ]]; then
+    redact_yaml_file upstreams.yml
+  else
+    log_warn "upstreams.yml not found"
+  fi
   echo
   echo "=== Generated Files in /data ==="
   compose exec "$COMPOSE_SERVICE" sh -c "ls -la /data/ && echo && echo '=== Caddyfile Preview ===' && head -40 /data/Caddyfile 2>/dev/null || echo 'Caddyfile not found'" || true
@@ -221,11 +265,35 @@ clean_all() {
 verify_project() {
   cd "$SCRIPT_DIR"
   python3 -m py_compile src/certify_reverse/cli.py src/certify_reverse/status_cli.py src/certify_reverse/templates.py
-  python3 -m unittest discover -s tests -p 'test_*.py'
+  python3 - <<'PY'
+import re
+import tomllib
+from pathlib import Path
+
+with Path("pyproject.toml").open("rb") as f:
+    project_version = tomllib.load(f)["project"]["version"]
+init_text = Path("src/certify_reverse/__init__.py").read_text(encoding="utf-8")
+match = re.search(r'^__version__ = "([0-9]+\.[0-9]+\.[0-9]+)"$', init_text, re.M)
+if match is None or match.group(1) != project_version:
+    raise SystemExit("Version mismatch between pyproject.toml and certify_reverse.__version__")
+PY
+  if command -v uv >/dev/null 2>&1; then
+    uv sync --frozen --group dev
+    uv run --frozen --group dev pytest -q
+    uv run --frozen --group dev ruff check src tests scripts
+    uv run --frozen --group dev mypy src/certify_reverse scripts/bump_version.py
+    local build_dir
+    build_dir="$(mktemp -d)"
+    uv build --out-dir "$build_dir" >/dev/null
+    rm -rf "$build_dir"
+  else
+    log_warn "uv not found; running the reduced stdlib verification path"
+    python3 -m unittest discover -s tests -p 'test_*.py'
+  fi
   bash -n caddy-docker.sh
   sh -n boot.sh
-  docker compose -f docker/docker-compose.yml config >/dev/null
-  docker compose -f docker/docker-compose.yml -f docker/docker-compose.caddyfile.yml config >/dev/null
+  compose config >/dev/null
+  compose_caddyfile config >/dev/null
   log_success "Verification passed"
 }
 
@@ -242,8 +310,19 @@ create_tag() {
 }
 
 main() {
+  local command="${1:-}"
+  case "$command" in
+    version) show_version; return ;;
+    bump-patch) bump_patch; return ;;
+    bump-minor) bump_minor; return ;;
+    bump-major) bump_major; return ;;
+    release-note) release_note; return ;;
+    tag) create_tag; return ;;
+    help|--help|-h|"") show_usage; return ;;
+  esac
+
   check_docker_compose
-  case "${1:-}" in
+  case "$command" in
     start) start_services ;;
     stop) stop_services ;;
     restart) restart_services ;;
@@ -263,13 +342,6 @@ main() {
     clean) clean_all ;;
     reload-dnsmasq) reload_dnsmasq ;;
     verify) verify_project ;;
-    version) show_version ;;
-    bump-patch) bump_patch ;;
-    bump-minor) bump_minor ;;
-    bump-major) bump_major ;;
-    release-note) release_note ;;
-    tag) create_tag ;;
-    help|--help|-h|"") show_usage ;;
     *) log_error "Unknown command: $1"; show_usage; exit 1 ;;
   esac
 }

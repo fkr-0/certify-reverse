@@ -12,6 +12,8 @@ Caddy reverse-proxy bootstrapper with DNS-01 automation, runtime plugin manageme
 - Config split:
   - `.env` for global settings (`DNS_PROVIDER`, `DNS_TOKEN`, `DOMAIN`, etc.)
   - `upstreams.yml` for service topology (top-level keys are subdomains)
+- Provider-specific credential keys through `CADDY_DNS_PLUGIN_TOKEN_FIELD`.
+- Strict configuration validation before files or service directories are written.
 - Optional pinned Caddy version via `CADDY_VERSION` (default `latest`).
 - Diff logging when generated files change (stdout + rotating file logger).
 - Fallback runtime override with `/data/Caddyfile.overwrite`.
@@ -28,6 +30,8 @@ Caddy reverse-proxy bootstrapper with DNS-01 automation, runtime plugin manageme
 - `docker/docker-compose.caddyfile.yml`: print generated Caddyfile and exit.
 - `caddy-docker.sh`: operational + versioning helper script.
 - `.env.example`, `upstreams.yml.example`: config templates.
+- `CHANGELOG.md`: release history.
+- `issues.yml`: known larger work intentionally deferred from the current release.
 
 ## Configuration
 
@@ -35,6 +39,16 @@ Caddy reverse-proxy bootstrapper with DNS-01 automation, runtime plugin manageme
 
 ```bash
 cp .env.example .env
+```
+
+The selected Caddy DNS plugin may use a different credential field. The default
+matches providers using `api_token`:
+
+```env
+DNS_PROVIDER=desec
+DNS_TOKEN=REPLACE_WITH_DNS_API_TOKEN
+CADDY_DNS_PLUGIN_TOKEN_FIELD=api_token
+DOMAIN=example.com
 ```
 
 2. Upstream topology:
@@ -58,6 +72,10 @@ secure-app:
   skip_verify: false
 ```
 
+Subdomain keys must be valid DNS names. Ports must be integers from `1` through
+`65535`, schemes are limited to `http` and `https`, and trust-pool paths must be
+absolute. IPv4, IPv6, and hostname upstream targets are supported.
+
 ## Commands
 
 Everything goes through `./caddy-docker.sh`:
@@ -78,7 +96,7 @@ Runtime:
   - `./caddy-docker.sh logs --follow caddy` (or `dnsmasq`) filters to one service.
 
 Project/version:
-- `verify`
+- `verify` (tests, lint, type checks, package build, shell syntax, Compose validation)
 - `version`
 - `bump-patch`, `bump-minor`, `bump-major`
 - `release-note`
@@ -169,7 +187,7 @@ CADDY_BUILDER_IMAGE=caddy:2.10.0-builder
 Generated `/data/index.html` includes:
 - service links,
 - ping/check-cert actions backed by server-side probe endpoints on `status.<domain>`,
-- non-secret metadata (email, provider, built/latest caddy version),
+- operational metadata (email, provider, built/latest caddy version),
 - ACME state summary from `/data/acme-state.json`.
 - crt.sh certificate history table sourced from `/data/crtsh-state.json` on page load.
 
@@ -189,6 +207,11 @@ Update checks now also report whether the built Caddy binary exposes a native `u
 ```bash
 ./caddy-docker.sh verify
 ```
+
+The full verification path requires Docker Compose and `uv`. It uses the frozen
+`uv.lock`, runs the Python and shell regression suite, Ruff, Mypy, creates wheel
+and source distributions in a temporary directory, and validates both Compose
+configurations.
 
 ## End-User Docs
 

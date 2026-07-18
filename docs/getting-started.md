@@ -18,6 +18,7 @@ Edit `.env` with at least:
 - `DOMAIN`
 - `DNS_PROVIDER`
 - `DNS_TOKEN`
+- `CADDY_DNS_PLUGIN_TOKEN_FIELD` (usually `api_token`; some plugins use `token`)
 - `ACME_EMAIL`
 
 ## 2) Define Upstreams

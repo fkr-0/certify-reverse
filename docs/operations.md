@@ -44,3 +44,17 @@
 ./caddy-docker.sh release-note
 ./caddy-docker.sh tag
 ```
+
+`version`, `bump-*`, `release-note`, and `tag` are local project operations and
+do not require Docker. `verify` is the release gate and checks:
+
+- frozen dependency resolution,
+- unit, regression, and Compose integration tests,
+- Ruff and Mypy,
+- wheel and source-distribution creation,
+- synchronized project/package versions,
+- shell syntax,
+- base and Caddyfile-print Compose configurations.
+
+The `config` command redacts keys containing `TOKEN`, `SECRET`, `PASSWORD`,
+`API_KEY`, or `PRIVATE_KEY` before printing `.env` and `upstreams.yml`.

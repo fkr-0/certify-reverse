@@ -26,6 +26,7 @@ class _Cfg:
     email = "admin@example.com"
     dns_provider = "desec"
     dns_token = "token"
+    dns_token_field = "api_token"
     domain = "example.com"
     dnsmasq_address_ip = "10.0.0.1"
     upstreams = [_Upstream("app", "10.0.0.10", 8080, "http")]
@@ -69,6 +70,18 @@ class TemplatesRegressionTests(unittest.TestCase):
         self.assertNotIn("<th>Status</th>", html)
         self.assertNotIn("<th>Actions</th>", html)
 
+    def test_render_status_index_html_cannot_close_inline_script_from_metadata(self):
+        html = render_status_index_html(
+            _Cfg(),
+            {
+                "email": "operator@example.com</script><script>alert(1)</script>",
+                "domain": "example.com",
+            },
+        )
+
+        self.assertNotIn("</script><script>alert(1)</script>", html)
+        self.assertIn(r"\u003c/script\u003e", html)
+
     def test_render_caddy_does_not_emit_unsupported_pki_options(self):
         caddyfile = render_caddy(_Cfg())
         self.assertNotIn("root_ca_ttl", caddyfile)
@@ -85,6 +98,21 @@ class TemplatesRegressionTests(unittest.TestCase):
             "app.example.com {\n    handle /favicon.ico",
             caddyfile,
         )
+
+    def test_render_caddy_uses_configured_dns_token_field(self):
+        class _CfgToken(_Cfg):
+            dns_token_field = "token"
+
+        caddyfile = render_caddy(_CfgToken())
+        self.assertIn("token {$CADDY_DNS_PLUGIN_TOKEN}", caddyfile)
+        self.assertNotIn("api_token {$CADDY_DNS_PLUGIN_TOKEN}", caddyfile)
+
+    def test_render_caddy_brackets_ipv6_upstream_literals(self):
+        class _CfgIpv6(_Cfg):
+            upstreams = [_Upstream("app", "2001:db8::10", 8080, "http")]
+
+        caddyfile = render_caddy(_CfgIpv6())
+        self.assertIn("reverse_proxy http://[2001:db8::10]:8080", caddyfile)
 
     def test_render_dnsmasq_logs_to_data_logs(self):
         conf = render_dnsmasq(_Cfg())

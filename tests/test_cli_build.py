@@ -10,6 +10,34 @@ import certify_reverse.cli as cli
 
 
 class CliBuildTests(unittest.TestCase):
+    def test_caddy_has_plugin_requires_exact_module_name(self):
+        old_caddy = cli.CADDY
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                cli.CADDY = Path(tmp) / "caddy-rebuild"
+                cli.CADDY.write_text("dummy", encoding="utf-8")
+                with mock.patch.object(
+                    cli,
+                    "run",
+                    return_value="dns.providers.desec-extra\ndns.providers.cloudflare\n",
+                ):
+                    self.assertFalse(cli.caddy_has_plugin("desec"))
+                with mock.patch.object(cli, "run", return_value="dns.providers.desec\n"):
+                    self.assertTrue(cli.caddy_has_plugin("desec"))
+        finally:
+            cli.CADDY = old_caddy
+
+    def test_update_check_degrades_cleanly_on_timeout(self):
+        with (
+            mock.patch.object(cli, "get_built_caddy_version", return_value="v2.10.0"),
+            mock.patch.object(cli, "get_latest_caddy_version", side_effect=TimeoutError("offline")),
+        ):
+            status = cli.check_caddy_update_status()
+
+        self.assertEqual(status["latest"], "unavailable")
+        self.assertIsNone(status["recommended"])
+        self.assertIn("offline", status["error"])
+
     def test_build_caddy_uses_writable_caches_and_replaces_binary_atomically(self):
         old_work = cli.WORK
         old_caddy = cli.CADDY

@@ -13,6 +13,7 @@ import difflib
 import importlib
 import importlib.metadata
 import importlib.resources
+import ipaddress
 import json
 import logging
 import os
@@ -66,6 +67,12 @@ _C_HL = "\033[96m"
 _C_OK = "\033[92m"
 _C_WARN = "\033[93m"
 _C_RESET = "\033[0m"
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_PROVIDER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+_HOST_LABEL_RE = re.compile(r"^[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?$")
+_DNS_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+$")
 
 
 class StripAnsiFormatter(logging.Formatter):
@@ -80,6 +87,31 @@ class InvalidSetupError(Exception):
 
 def hl(value: Any) -> str:
     return f"{_C_HL}{value}{_C_RESET}"
+
+
+def _validated_dns_name(value: str, label: str, *, allow_underscore: bool = False) -> str:
+    if not isinstance(value, str):
+        raise InvalidSetupError(f"{label} must be a string")
+    normalized = value.strip().rstrip(".").lower()
+    if not normalized or len(normalized) > 253:
+        raise InvalidSetupError(f"{label} must be a non-empty DNS name no longer than 253 characters")
+    matcher = _HOST_LABEL_RE if allow_underscore else _DNS_LABEL_RE
+    if any(not matcher.fullmatch(part) for part in normalized.split(".")):
+        raise InvalidSetupError(f"{label} contains an invalid DNS label: {value!r}")
+    return normalized
+
+
+def _validated_upstream_host(value: str) -> str:
+    if not isinstance(value, str):
+        raise InvalidSetupError("upstream ip/host must be a string")
+    normalized = value.strip()
+    if not normalized or any(ch.isspace() or ord(ch) < 32 for ch in normalized):
+        raise InvalidSetupError(f"upstream ip/host is invalid: {value!r}")
+    try:
+        ipaddress.ip_address(normalized)
+        return normalized
+    except ValueError:
+        return _validated_dns_name(normalized, "upstream ip/host", allow_underscore=True)
 
 
 def configure_logging() -> None:
@@ -122,6 +154,35 @@ class Upstream:
     ext_name: str | None = None
     ext_params: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        self.subdomain = _validated_dns_name(self.subdomain, "upstream subdomain")
+        self.ip = _validated_upstream_host(self.ip)
+        if not isinstance(self.port, int) or isinstance(self.port, bool) or not 1 <= self.port <= 65535:
+            raise InvalidSetupError(f"upstream '{self.subdomain}' port must be an integer from 1 to 65535")
+        if not isinstance(self.scheme, str) or self.scheme.lower().strip() not in {"http", "https"}:
+            raise InvalidSetupError(f"upstream '{self.subdomain}' scheme must be 'http' or 'https'")
+        self.scheme = self.scheme.lower().strip()
+        if not isinstance(self.skip_verify, bool):
+            raise InvalidSetupError(f"upstream '{self.subdomain}' skip_verify must be a boolean")
+        if not isinstance(self.forward_auth_headers, bool):
+            raise InvalidSetupError(
+                f"upstream '{self.subdomain}' forward_auth_headers must be a boolean"
+            )
+        if self.trust_pool is not None:
+            if not isinstance(self.trust_pool, str) or not self.trust_pool.strip():
+                raise InvalidSetupError(f"upstream '{self.subdomain}' trust_pool must be a path string")
+            trust_pool = Path(self.trust_pool).expanduser()
+            if not trust_pool.is_absolute():
+                raise InvalidSetupError(f"upstream '{self.subdomain}' trust_pool must be an absolute path")
+            self.trust_pool = str(trust_pool)
+        if self.ext_name is not None:
+            if not isinstance(self.ext_name, str) or not _IDENTIFIER_RE.fullmatch(self.ext_name):
+                raise InvalidSetupError(
+                    f"upstream '{self.subdomain}' ext_name must be a Python identifier"
+                )
+        if not isinstance(self.ext_params, dict):
+            raise InvalidSetupError(f"upstream '{self.subdomain}' ext_params must be a mapping")
+
     @property
     def is_https(self) -> bool:
         return self.scheme.lower() == "https"
@@ -134,9 +195,35 @@ class ReverseProxyConfig:
     email: str
     domain: str
     caddy_version: str = "latest"
+    dns_token_field: str = "api_token"
     dnsmasq_address_mode: str = "manual"
     dnsmasq_address_ip: str = "10.0.0.1"
     upstreams: list[Upstream] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.dns_provider, str) or not _PROVIDER_RE.fullmatch(self.dns_provider):
+            raise InvalidSetupError(
+                "DNS_PROVIDER must contain only letters, numbers, underscores, and hyphens"
+            )
+        self.dns_provider = self.dns_provider.lower()
+        if not isinstance(self.dns_token, str) or not self.dns_token:
+            raise InvalidSetupError("DNS_TOKEN must not be empty")
+        if not isinstance(self.dns_token_field, str) or not _IDENTIFIER_RE.fullmatch(
+            self.dns_token_field
+        ):
+            raise InvalidSetupError("CADDY_DNS_PLUGIN_TOKEN_FIELD must be a Caddy identifier")
+        if not isinstance(self.email, str) or not _EMAIL_RE.fullmatch(self.email.strip()):
+            raise InvalidSetupError("ACME_EMAIL must be a valid email address")
+        self.email = self.email.strip()
+        self.domain = _validated_dns_name(self.domain, "DOMAIN")
+        if (
+            not isinstance(self.caddy_version, str)
+            or not self.caddy_version
+            or any(ch.isspace() or ord(ch) < 32 for ch in self.caddy_version)
+        ):
+            raise InvalidSetupError("CADDY_VERSION must be a single version token")
+        if not is_ipv4(self.dnsmasq_address_ip):
+            raise InvalidSetupError("DNSMASQ_ADDRESS_IP must resolve to a valid IPv4 address")
 
     @classmethod
     def from_sources(cls) -> "ReverseProxyConfig":
@@ -147,6 +234,10 @@ class ReverseProxyConfig:
         email = os.getenv("ACME_EMAIL", "admin@example.com")
         domain = must_env("DOMAIN")
         caddy_version = os.getenv("CADDY_VERSION", "latest").strip() or "latest"
+        dns_token_field = env_first(
+            "CADDY_DNS_PLUGIN_TOKEN_FIELD",
+            default="api_token",
+        )
         dnsmasq_address_mode = env_first(
             "DNSMASQ_ADDRESS_MODE",
             "dnsmasq_address_mode",
@@ -162,6 +253,7 @@ class ReverseProxyConfig:
             email=email,
             domain=domain,
             caddy_version=caddy_version,
+            dns_token_field=dns_token_field,
             dnsmasq_address_mode=dnsmasq_address_mode,
             dnsmasq_address_ip=dnsmasq_address_ip,
             upstreams=upstreams,
@@ -215,6 +307,11 @@ def _extract_src_ip_from_route(route_output: str) -> str | None:
 
 
 def derive_dnsmasq_address_ip(mode: str, manual_ip: str) -> str:
+    mode = mode.strip().lower()
+    if mode not in {"manual", "host-src-ip", "auto"}:
+        raise InvalidSetupError(
+            "DNSMASQ_ADDRESS_MODE must be one of: manual, host-src-ip, auto"
+        )
     host_derived = env_first("HOST_DNSMASQ_ADDRESS_IP", default="")
     if mode in {"host-src-ip", "auto"} and host_derived and is_ipv4(host_derived):
         log.info(
@@ -234,9 +331,10 @@ def derive_dnsmasq_address_ip(mode: str, manual_ip: str) -> str:
             )
             manual_ip = resolved
 
-    if mode not in {"manual", "host-src-ip", "auto"}:
-        log.warning("Unknown DNSMASQ_ADDRESS_MODE=%s; falling back to manual", hl(mode))
-        return manual_ip
+    if not is_ipv4(manual_ip):
+        raise InvalidSetupError(
+            "DNSMASQ_ADDRESS_IP must be a valid IPv4 address or resolve to one"
+        )
     if mode == "manual":
         log.info("dnsmasq address mode=%s target=%s", hl(mode), hl(manual_ip))
         return manual_ip
@@ -274,12 +372,14 @@ def load_env_file(path: Path) -> None:
         log.warning("%s not found; relying on process environment", path)
         return
 
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    for line_number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
         k = k.strip()
+        if not _ENV_KEY_RE.fullmatch(k):
+            raise InvalidSetupError(f"Invalid environment key in {path}:{line_number}: {k!r}")
         v = v.strip().strip('"').strip("'")
         # File-based runtime config is authoritative for this app and must
         # override inherited image/base environment defaults.
@@ -292,15 +392,23 @@ def load_upstreams(path: Path) -> list[Upstream]:
             f"Missing upstreams file: {path}. Copy upstreams.yml.example to upstreams.yml."
         )
 
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as e:
+        raise InvalidSetupError(f"Could not parse {path}: {e}") from e
     if not isinstance(data, dict):
         raise InvalidSetupError("upstreams.yml must contain a top-level mapping")
 
     upstreams: list[Upstream] = []
     for subdomain, spec in data.items():
+        if not isinstance(subdomain, str):
+            raise InvalidSetupError("Every upstream key must be a string subdomain")
         if not isinstance(spec, dict):
             raise InvalidSetupError(f"Upstream '{subdomain}' must be an object")
-        upstreams.append(Upstream(subdomain=subdomain, **spec))
+        try:
+            upstreams.append(Upstream(subdomain=subdomain, **spec))
+        except TypeError as e:
+            raise InvalidSetupError(f"Invalid fields for upstream '{subdomain}': {e}") from e
 
     return upstreams
 
@@ -342,7 +450,7 @@ def check_caddy_update_status() -> dict[str, Any]:
             native_upgrade_supported = False
     try:
         latest = get_latest_caddy_version()
-    except URLError as e:
+    except (URLError, TimeoutError, OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
         return {
             "built": built,
             "latest": "unavailable",
@@ -376,8 +484,12 @@ def get_app_commit() -> str:
 def caddy_has_plugin(provider: str) -> bool:
     if not CADDY.exists():
         return False
-    mods = run([str(CADDY), "list-modules"]).splitlines()
-    return any(provider in m for m in mods)
+    try:
+        mods = run([str(CADDY), "list-modules"]).splitlines()
+    except RuntimeError:
+        return False
+    expected = f"dns.providers.{provider}"
+    return any(module.strip() == expected for module in mods)
 
 
 def build_caddy(dns_provider: str, caddy_version: str = "latest") -> None:
@@ -600,7 +712,12 @@ def get_caddy_certificates() -> dict[str, Any]:
         raise RuntimeError("Caddy binary not found")
 
     config_json = run([str(CADDY), "config", "--adapter", "caddyfile", "--config", str(CFILE)])
-    config_data = yaml.safe_load(config_json)
+    try:
+        config_data = yaml.safe_load(config_json)
+    except yaml.YAMLError as e:
+        raise RuntimeError("Caddy returned invalid config JSON") from e
+    if not isinstance(config_data, dict):
+        raise RuntimeError("Caddy returned an empty or invalid config document")
 
     certs_info: dict[str, Any] = {"certificates": [], "ca_certificates": [], "timestamp": time.time()}
     if "apps" in config_data and "tls" in config_data["apps"]:
@@ -652,7 +769,7 @@ def auto_export_internal_ca() -> dict[str, str] | None:
     for pki_dir in pki_dirs:
         if not pki_dir.exists():
             continue
-        for filename in ["root.crt", "ca.crt", "root.pem", "ca.pem", "intermediate.crt", "intermediate.pem"]:
+        for filename in ["root.crt", "ca.crt", "root.pem", "ca.pem"]:
             ca_path = pki_dir / filename
             if ca_path.exists() and ca_path.stat().st_size > 0:
                 ca_content = ca_path.read_text(encoding="utf-8")
@@ -670,6 +787,16 @@ def auto_export_internal_ca() -> dict[str, str] | None:
     existing_pem = cert_export_dir / "caddy-internal-ca.pem"
     existing_crt = cert_export_dir / "caddy-internal-ca.crt"
     if existing_pem.exists() and existing_pem.stat().st_size > 100:
+        if not existing_crt.exists() or existing_crt.stat().st_size <= 100:
+            shutil.copy2(existing_pem, existing_crt)
+        return {
+            "ca_cert_pem": str(existing_pem),
+            "ca_cert_crt": str(existing_crt),
+            "export_dir": str(cert_export_dir),
+            "source": "existing",
+        }
+    if existing_crt.exists() and existing_crt.stat().st_size > 100:
+        shutil.copy2(existing_crt, existing_pem)
         return {
             "ca_cert_pem": str(existing_pem),
             "ca_cert_crt": str(existing_crt),
@@ -752,11 +879,12 @@ def run_extensions(cfg: ReverseProxyConfig) -> None:
             mod = importlib.import_module(f"trust_ext.{u.ext_name}")
             ext_cls = getattr(mod, "TrustExtension")
             ext = ext_cls(**u.ext_params)
-            if not ext.status(u):
+            status = ext.status(u)
+            if not status:
                 log.info("Issuing certificate for %s via %s", u.subdomain, u.ext_name)
                 ext.issue(u)
             else:
-                log.debug("Certificate for %s ok – expires %s", u.subdomain, ext.status(u))
+                log.debug("Certificate for %s ok – expires %s", u.subdomain, status)
         except (ImportError, AttributeError, TypeError, RuntimeError) as e:
             log.error("Extension %s failed on %s: %s", u.ext_name, u.subdomain, e)
 
@@ -858,8 +986,7 @@ def main(rebuild: bool = False, show_certs: bool = False, print_caddyfile: bool 
     cfg = ReverseProxyConfig.from_sources()
     os.environ["CADDY_DNS_PLUGIN"] = cfg.dns_provider
     os.environ["CADDY_DNS_PLUGIN_TOKEN"] = cfg.dns_token
-    # Keep provider credential key configurable; default preserves previous behavior.
-    os.environ.setdefault("CADDY_DNS_PLUGIN_TOKEN_FIELD", "token")
+    os.environ["CADDY_DNS_PLUGIN_TOKEN_FIELD"] = cfg.dns_token_field
     log.info(
         "Loaded env+upstreams config for domain %s with %s upstream(s), dnsmasq mode %s target %s",
         hl(cfg.domain),

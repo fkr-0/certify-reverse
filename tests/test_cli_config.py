@@ -30,6 +30,13 @@ class CliConfigTests(unittest.TestCase):
             if old is not None:
                 os.environ[key] = old
 
+    def test_load_env_file_rejects_invalid_environment_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / ".env"
+            p.write_text("BAD-KEY=value\n", encoding="utf-8")
+            with self.assertRaisesRegex(InvalidSetupError, "Invalid environment key"):
+                load_env_file(p)
+
     def test_load_upstreams_top_level_mapping(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / "upstreams.yml"
@@ -45,6 +52,35 @@ class CliConfigTests(unittest.TestCase):
             p = Path(tmp) / "upstreams.yml"
             p.write_text("- subdomain: app\n", encoding="utf-8")
             with self.assertRaises(InvalidSetupError):
+                load_upstreams(p)
+
+    def test_load_upstreams_rejects_path_traversal_subdomain(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "upstreams.yml"
+            p.write_text("../../escaped:\n  ip: 10.0.0.1\n  port: 8080\n", encoding="utf-8")
+            with self.assertRaisesRegex(InvalidSetupError, "invalid DNS label"):
+                load_upstreams(p)
+
+    def test_load_upstreams_rejects_invalid_scheme_and_port(self):
+        invalid_specs = (
+            "app:\n  ip: 10.0.0.1\n  port: 0\n",
+            "app:\n  ip: 10.0.0.1\n  port: 8080\n  scheme: ftp\n",
+        )
+        for content in invalid_specs:
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as tmp:
+                p = Path(tmp) / "upstreams.yml"
+                p.write_text(content, encoding="utf-8")
+                with self.assertRaises(InvalidSetupError):
+                    load_upstreams(p)
+
+    def test_load_upstreams_rejects_unknown_fields_cleanly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "upstreams.yml"
+            p.write_text(
+                "app:\n  ip: 10.0.0.1\n  port: 8080\n  unsupported: true\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(InvalidSetupError, "Invalid fields"):
                 load_upstreams(p)
 
     def test_load_env_file_overrides_preexisting_env(self):
@@ -124,6 +160,10 @@ class CliConfigTests(unittest.TestCase):
             out = derive_dnsmasq_address_ip("host-src-ip", "10.0.0.1")
             self.assertEqual(out, "10.0.0.1")
 
+    def test_derive_dnsmasq_address_ip_rejects_unknown_mode(self):
+        with self.assertRaisesRegex(InvalidSetupError, "DNSMASQ_ADDRESS_MODE"):
+            derive_dnsmasq_address_ip("surprise", "10.0.0.1")
+
     def test_derive_dnsmasq_address_ip_prefers_host_override(self):
         key = "HOST_DNSMASQ_ADDRESS_IP"
         old = os.environ.get(key)
@@ -141,6 +181,16 @@ class CliConfigTests(unittest.TestCase):
         self.assertFalse(is_ipv4("999.999.999.999"))
         self.assertFalse(is_ipv4("256.1.1.1"))
         self.assertTrue(is_ipv4("192.168.1.1"))
+
+    def test_reverse_proxy_config_rejects_empty_caddy_version(self):
+        with self.assertRaisesRegex(InvalidSetupError, "CADDY_VERSION"):
+            cli.ReverseProxyConfig(
+                dns_provider="desec",
+                dns_token="secret",
+                email="admin@example.com",
+                domain="example.com",
+                caddy_version="",
+            )
 
 
 if __name__ == "__main__":
