@@ -885,13 +885,43 @@ def render_status_page(services_json: str, meta_json: str) -> str:
       button.textContent = busy ? busyLabel : button.dataset.label;
     }
 
-    async function fetchJson(url, timeoutMs = 15000) {
+    async function fetchJson(url, timeoutMs = 15000, maxBytes = 8 * 1024 * 1024) {
       const controller = new AbortController();
       const timer = window.setTimeout(() => controller.abort(), timeoutMs);
       try {
         const response = await fetch(url, { cache: 'no-store', signal: controller.signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return await response.json();
+        const declaredLength = Number(response.headers.get('content-length'));
+        if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+          throw new Error(`Response exceeds ${maxBytes} bytes`);
+        }
+        if (!response.body) {
+          const textBody = await response.text();
+          if (new TextEncoder().encode(textBody).byteLength > maxBytes) {
+            throw new Error(`Response exceeds ${maxBytes} bytes`);
+          }
+          return JSON.parse(textBody);
+        }
+        const reader = response.body.getReader();
+        const chunks = [];
+        let received = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          received += value.byteLength;
+          if (received > maxBytes) {
+            controller.abort();
+            throw new Error(`Response exceeds ${maxBytes} bytes`);
+          }
+          chunks.push(value);
+        }
+        const payload = new Uint8Array(received);
+        let offset = 0;
+        chunks.forEach((chunk) => {
+          payload.set(chunk, offset);
+          offset += chunk.byteLength;
+        });
+        return JSON.parse(new TextDecoder().decode(payload));
       } finally {
         window.clearTimeout(timer);
       }
@@ -1059,7 +1089,8 @@ def render_status_page(services_json: str, meta_json: str) -> str:
           response = await fetch(url, { method: 'GET', mode: 'cors', cache: 'no-store', signal: controller.signal });
         }
         const elapsed = Math.round(performance.now() - started);
-        return { ok: true, message: `HTTP ${response.status} · ${elapsed} ms` };
+        const ok = response.status < 500;
+        return { ok, message: `HTTP ${response.status} · ${elapsed} ms` };
       } catch (error) {
         const message = error && error.name === 'AbortError' ? 'Timed out after 12 s' : `Unreachable · ${error.message}`;
         return { ok: false, message };

@@ -92,6 +92,9 @@ class TemplatesRegressionTests(unittest.TestCase):
         self.assertIn('id="history-filter" type="search"', html)
         self.assertIn('AbortController', html)
         self.assertIn('if (!response.ok)', html)
+        self.assertIn("const ok = response.status < 500", html)
+        self.assertIn("Response exceeds ${maxBytes} bytes", html)
+        self.assertIn("response.body.getReader()", html)
         self.assertNotIn(".innerHTML", html)
 
     def test_status_dashboard_inline_javascript_has_valid_syntax(self):
@@ -136,6 +139,8 @@ class TemplatesRegressionTests(unittest.TestCase):
         self.assertIn("propagation_timeout 15m", caddyfile)
         self.assertIn("resolvers 1.1.1.1 8.8.8.8", caddyfile)
         self.assertIn("handle_path /probe/crtsh", caddyfile)
+        self.assertEqual(caddyfile.count("header_up X-Real-IP {remote_host}"), 2)
+        self.assertNotIn("header_up X-Real-IP {remote}", caddyfile)
         self.assertIn("handle /favicon.ico", caddyfile)
         self.assertNotIn(
             "app.example.com {\n    handle /favicon.ico",

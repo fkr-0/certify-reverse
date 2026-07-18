@@ -27,7 +27,6 @@ services:
 
   dnsmasq:
     image: andyshinn/dnsmasq:latest
-    container_name: dnsmasq
     entrypoint:
       - /bin/sh
       - -ec

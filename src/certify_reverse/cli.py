@@ -18,7 +18,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import socket
 import subprocess
 import sys
@@ -78,6 +77,10 @@ _CADDY_VERSION_RE = re.compile(
 _DNS_TOKEN_FIELD_DEFAULTS = {
     "desec": "token",
 }
+_RESERVED_UPSTREAM_SUBDOMAINS = {"status", "internal-ca"}
+_GITHUB_MAX_RESPONSE_BYTES = 1024 * 1024
+_CRTSH_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+_CRTSH_MAX_ENTRIES = 5000
 _HOST_LABEL_RE = re.compile(r"^[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?$")
 _DNS_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+$")
@@ -105,6 +108,20 @@ def hl(value: Any) -> str:
     return f"{_C_HL}{value}{_C_RESET}"
 
 
+def _fsync_directory(path: Path) -> None:
+    """Best-effort directory sync after an atomic replacement."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 def _atomic_write_text(path: Path, content: str, *, mode: int | None = None) -> None:
     """Replace a text file atomically using a temporary file in the same directory."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,6 +137,7 @@ def _atomic_write_text(path: Path, content: str, *, mode: int | None = None) -> 
         elif path.exists():
             tmp_path.chmod(path.stat().st_mode & 0o777)
         os.replace(tmp_path, path)
+        _fsync_directory(path.parent)
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -139,8 +157,20 @@ def _atomic_write_bytes(path: Path, content: bytes, *, mode: int | None = None) 
         elif path.exists():
             tmp_path.chmod(path.stat().st_mode & 0o777)
         os.replace(tmp_path, path)
+        _fsync_directory(path.parent)
     finally:
         tmp_path.unlink(missing_ok=True)
+
+
+def _atomic_copy_file(source: Path, destination: Path, *, mode: int | None = None) -> None:
+    _atomic_write_bytes(destination, source.read_bytes(), mode=mode)
+
+
+def _read_limited_response(response: Any, max_bytes: int, label: str) -> bytes:
+    payload = response.read(max_bytes + 1)
+    if len(payload) > max_bytes:
+        raise ValueError(f"{label} response exceeds {max_bytes} bytes")
+    return payload
 
 
 def _validated_dns_name(value: str, label: str, *, allow_underscore: bool = False) -> str:
@@ -178,17 +208,16 @@ def configure_logging() -> None:
     if _LOG_CONFIGURED:
         return
 
-    file_logging_ready = True
+    file_logging_ready = False
     try:
         DATADIR.mkdir(parents=True, exist_ok=True)
         LOGDIR.mkdir(parents=True, exist_ok=True)
-    except PermissionError:
-        file_logging_ready = False
-
-    if file_logging_ready:
         rot = RotatingFileHandler(LOGDIR / "app.log", maxBytes=100_000, backupCount=5)
         rot.setFormatter(StripAnsiFormatter(LOGFMT))
         log.addHandler(rot)
+        file_logging_ready = True
+    except OSError:
+        file_logging_ready = False
 
     console = logging.StreamHandler(sys.stderr)
     console.setFormatter(logging.Formatter(LOGFMT))
@@ -265,8 +294,9 @@ class ReverseProxyConfig:
                 "DNS_PROVIDER must contain only letters, numbers, underscores, and hyphens"
             )
         self.dns_provider = self.dns_provider.lower()
-        if not isinstance(self.dns_token, str) or not self.dns_token:
+        if not isinstance(self.dns_token, str) or not self.dns_token.strip():
             raise InvalidSetupError("DNS_TOKEN must not be empty")
+        self.dns_token = self.dns_token.strip()
         if not isinstance(self.dns_token_field, str):
             raise InvalidSetupError("CADDY_DNS_PLUGIN_TOKEN_FIELD must be a Caddy identifier")
         self.dns_token_field = self.dns_token_field.strip()
@@ -287,8 +317,24 @@ class ReverseProxyConfig:
             )
         if self.caddy_version != "latest" and not self.caddy_version.startswith("v"):
             self.caddy_version = f"v{self.caddy_version}"
+        if not isinstance(self.dnsmasq_address_mode, str):
+            raise InvalidSetupError("DNSMASQ_ADDRESS_MODE must be one of: manual, host-src-ip, auto")
+        self.dnsmasq_address_mode = self.dnsmasq_address_mode.strip().lower()
+        if self.dnsmasq_address_mode not in {"manual", "host-src-ip", "auto"}:
+            raise InvalidSetupError("DNSMASQ_ADDRESS_MODE must be one of: manual, host-src-ip, auto")
         if not is_ipv4(self.dnsmasq_address_ip):
             raise InvalidSetupError("DNSMASQ_ADDRESS_IP must resolve to a valid IPv4 address")
+        seen_subdomains: set[str] = set()
+        for upstream in self.upstreams:
+            if upstream.subdomain in _RESERVED_UPSTREAM_SUBDOMAINS:
+                raise InvalidSetupError(
+                    f"Upstream subdomain '{upstream.subdomain}' is reserved for a generated endpoint"
+                )
+            if upstream.subdomain in seen_subdomains:
+                raise InvalidSetupError(
+                    f"Upstream subdomain '{upstream.subdomain}' is configured more than once"
+                )
+            seen_subdomains.add(upstream.subdomain)
 
     @classmethod
     def from_sources(cls) -> "ReverseProxyConfig":
@@ -493,13 +539,17 @@ def semver_tuple(version: str) -> tuple[int, int, int] | None:
     return int(m.group(1)), int(m.group(2)), int(m.group(3))
 
 
-def get_built_caddy_version() -> str:
-    if not CADDY.exists():
+def get_caddy_version(binary: Path) -> str:
+    if not binary.exists():
         return "not-built"
     try:
-        return run([str(CADDY), "version"]).strip()
-    except RuntimeError:
+        return run([str(binary), "version"]).strip()
+    except (RuntimeError, OSError):
         return "unknown"
+
+
+def get_built_caddy_version() -> str:
+    return get_caddy_version(CADDY)
 
 
 def get_latest_caddy_version() -> str:
@@ -508,7 +558,11 @@ def get_latest_caddy_version() -> str:
         headers={"Accept": "application/vnd.github+json", "User-Agent": "certify-reverse"},
     )
     with urlopen(req, timeout=10) as r:
-        payload = json.loads(r.read().decode("utf-8"))
+        payload = json.loads(
+            _read_limited_response(r, _GITHUB_MAX_RESPONSE_BYTES, "GitHub release").decode(
+                "utf-8"
+            )
+        )
     if not isinstance(payload, dict):
         raise ValueError("GitHub release response is not an object")
     tag_name = payload.get("tag_name")
@@ -559,22 +613,28 @@ def get_app_commit() -> str:
     return env_first("CERTIFY_REVERSE_COMMIT", "APP_COMMIT", default="unknown")
 
 
-def caddy_has_plugin(provider: str) -> bool:
-    if not CADDY.exists():
+def caddy_binary_has_plugin(binary: Path, provider: str) -> bool:
+    if not binary.exists():
         return False
     try:
-        mods = run([str(CADDY), "list-modules"]).splitlines()
-    except RuntimeError:
+        mods = run([str(binary), "list-modules"]).splitlines()
+    except (RuntimeError, OSError):
         return False
     expected = f"dns.providers.{provider}"
     return any(module.strip() == expected for module in mods)
 
 
-def caddy_matches_requested_version(requested_version: str) -> bool:
+def caddy_has_plugin(provider: str) -> bool:
+    return caddy_binary_has_plugin(CADDY, provider)
+
+
+def caddy_binary_matches_requested_version(binary: Path, requested_version: str) -> bool:
     """Return whether the installed Caddy satisfies an explicit requested version."""
+    built_version = get_caddy_version(binary)
+    if built_version in {"not-built", "unknown"}:
+        return False
     if requested_version == "latest":
-        return True
-    built_version = get_built_caddy_version()
+        return semver_tuple(built_version) is not None
     requested = requested_version.removeprefix("v")
     match = re.search(
         r"\bv?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)\b",
@@ -586,6 +646,10 @@ def caddy_matches_requested_version(requested_version: str) -> bool:
     if "-" in requested or "+" in requested:
         return built == requested
     return semver_tuple(built) == semver_tuple(requested)
+
+
+def caddy_matches_requested_version(requested_version: str) -> bool:
+    return caddy_binary_matches_requested_version(CADDY, requested_version)
 
 
 def build_caddy(dns_provider: str, caddy_version: str = "latest") -> None:
@@ -628,9 +692,25 @@ def build_caddy(dns_provider: str, caddy_version: str = "latest") -> None:
         env=env,
         cwd=WORK,
     )
-    if not tmp_output.exists():
-        raise RuntimeError(f"xcaddy did not produce output binary: {tmp_output}")
-    tmp_output.replace(CADDY)
+    try:
+        if not tmp_output.exists() or tmp_output.stat().st_size == 0:
+            raise RuntimeError(f"xcaddy did not produce a non-empty output binary: {tmp_output}")
+        if not os.access(tmp_output, os.X_OK):
+            raise RuntimeError(f"xcaddy output is not executable: {tmp_output}")
+        if not caddy_binary_has_plugin(tmp_output, dns_provider):
+            raise RuntimeError(
+                f"rebuilt Caddy is missing required module dns.providers.{dns_provider}"
+            )
+        if not caddy_binary_matches_requested_version(tmp_output, caddy_version):
+            raise RuntimeError(
+                f"rebuilt Caddy version {get_caddy_version(tmp_output)!r} does not match {caddy_version!r}"
+            )
+        with tmp_output.open("rb") as stream:
+            os.fsync(stream.fileno())
+        os.replace(tmp_output, CADDY)
+        _fsync_directory(CADDY.parent)
+    finally:
+        tmp_output.unlink(missing_ok=True)
     log.info("Installed rebuilt Caddy binary at %s", hl(CADDY))
 
 
@@ -679,24 +759,6 @@ def format_caddyfile_content(content: str) -> str:
     if p.returncode == 0 and p.stdout.strip():
         return p.stdout
     return content
-
-
-def format_caddyfile_in_place(path: Path) -> None:
-    """Format a written Caddyfile on disk to silence runtime adapter warnings."""
-    if not CADDY.exists() or not path.exists():
-        return
-    try:
-        p = subprocess.run(
-            [str(CADDY), "fmt", "--overwrite", str(path)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-        if p.returncode == 0:
-            log.debug("Formatted Caddyfile in place: %s", hl(path))
-    except OSError as e:
-        log.debug("Failed to format Caddyfile in place %s: %s", hl(path), e)
 
 
 def prepare_caddy_runtime_env() -> None:
@@ -764,20 +826,28 @@ def fetch_crtsh_state(domain: str) -> dict[str, Any]:
     url = f"https://crt.sh/?q={quote_plus(domain)}&output=json"
     req = Request(url, headers={"User-Agent": "certify-reverse"})
     with urlopen(req, timeout=15) as r:
-        payload = r.read().decode("utf-8")
-    entries = json.loads(payload) if payload.strip() else []
-    if not isinstance(entries, list):
-        entries = []
+        payload = _read_limited_response(r, _CRTSH_MAX_RESPONSE_BYTES, "crt.sh").decode(
+            "utf-8"
+        )
+    raw_entries = json.loads(payload) if payload.strip() else []
+    if not isinstance(raw_entries, list):
+        raw_entries = []
+    entries = [row for row in raw_entries if isinstance(row, dict)]
+    ignored_entries = len(raw_entries) - len(entries)
 
     latest, validity = _crtsh_latest(entries)
+    stored_entries = entries[:_CRTSH_MAX_ENTRIES]
     state: dict[str, Any] = {
         "domain": domain,
         "source_url": url,
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "match_count": len(entries),
+        "stored_count": len(stored_entries),
+        "entries_truncated": len(entries) > len(stored_entries),
+        "ignored_malformed_entries": ignored_entries,
         "latest": latest,
         "latest_validity": validity,
-        "entries": entries,
+        "entries": stored_entries,
     }
 
     latest_id = latest.get("id") if isinstance(latest, dict) else "n/a"
@@ -884,7 +954,7 @@ def auto_export_internal_ca() -> dict[str, str] | None:
     existing_crt = cert_export_dir / "caddy-internal-ca.crt"
     if existing_pem.exists() and existing_pem.stat().st_size > 100:
         if not existing_crt.exists() or existing_crt.stat().st_size <= 100:
-            shutil.copy2(existing_pem, existing_crt)
+            _atomic_copy_file(existing_pem, existing_crt, mode=0o644)
         return {
             "ca_cert_pem": str(existing_pem),
             "ca_cert_crt": str(existing_crt),
@@ -892,7 +962,7 @@ def auto_export_internal_ca() -> dict[str, str] | None:
             "source": "existing",
         }
     if existing_crt.exists() and existing_crt.stat().st_size > 100:
-        shutil.copy2(existing_crt, existing_pem)
+        _atomic_copy_file(existing_crt, existing_pem, mode=0o644)
         return {
             "ca_cert_pem": str(existing_pem),
             "ca_cert_crt": str(existing_crt),
@@ -915,15 +985,15 @@ def copy_ca_to_service_directories(cfg: ReverseProxyConfig) -> None:
         service_dir = DATADIR / upstream.subdomain
         service_dir.mkdir(parents=True, exist_ok=True)
 
-        shutil.copy2(main_ca_pem, service_dir / "caddy-internal-ca.pem")
-        shutil.copy2(main_ca_crt, service_dir / "caddy-internal-ca.crt")
+        _atomic_copy_file(main_ca_pem, service_dir / "caddy-internal-ca.pem", mode=0o644)
+        _atomic_copy_file(main_ca_crt, service_dir / "caddy-internal-ca.crt", mode=0o644)
 
         readme_content = f"""# CA Certificate for {upstream.subdomain}
 
 - Subdomain: {upstream.subdomain}.{cfg.domain}
 - Target: {upstream.scheme}://{upstream.ip}:{upstream.port}
 """
-        (service_dir / "README.md").write_text(readme_content, encoding="utf-8")
+        _atomic_write_text(service_dir / "README.md", readme_content, mode=0o644)
 
 
 def auto_export_ca_certificates(cfg: ReverseProxyConfig) -> None:
@@ -977,8 +1047,9 @@ def generate_internal_service_certs(cfg: ReverseProxyConfig) -> None:
             key_tmp.chmod(0o600)
             os.replace(cert_tmp, cert_final)
             os.replace(key_tmp, key_final)
+            _fsync_directory(cert_path)
             log.info("Generated internal service cert for %s", service_name)
-        except RuntimeError as e:
+        except (RuntimeError, OSError) as e:
             log.warning("Failed to generate service certificate for %s: %s", service_name, e)
         finally:
             cert_tmp.unlink(missing_ok=True)
@@ -999,7 +1070,7 @@ def run_extensions(cfg: ReverseProxyConfig) -> None:
                 ext.issue(u)
             else:
                 log.debug("Certificate for %s ok – expires %s", u.subdomain, status)
-        except (ImportError, AttributeError, TypeError, RuntimeError) as e:
+        except Exception as e:
             log.error("Extension %s failed on %s: %s", u.ext_name, u.subdomain, e)
 
 
@@ -1132,10 +1203,12 @@ def main(rebuild: bool = False, show_certs: bool = False, print_caddyfile: bool 
             hl(cfg.dns_provider),
         )
 
+    # Reformat after a first-time rebuild so the generated file is atomically
+    # installed in its final form instead of being rewritten in place later.
+    caddyfile_content = format_caddyfile_content(render_caddy(cfg))
     run_extensions(cfg)
 
     log_if_changed(CFILE, caddyfile_content, "Caddyfile")
-    format_caddyfile_in_place(CFILE)
     log_if_changed(DNSMASQ, render_dnsmasq(cfg), "dnsmasq.conf")
 
     # caddy trust needs a running admin endpoint; skip pre-run invocation.
@@ -1181,6 +1254,11 @@ def entrypoint() -> None:
     )
     arg.add_argument("--force-build", action="store_true", help="Deprecated alias for --rebuild-caddy")
     arg.add_argument("--rebuild-caddy", action="store_true", help="Force rebuild Caddy binary")
+    arg.add_argument(
+        "--rebuild-caddy-only",
+        action="store_true",
+        help="Rebuild and validate Caddy, then exit without starting the server",
+    )
     arg.add_argument("--update-caddy", action="store_true", help="Force rebuild Caddy binary")
     arg.add_argument("--show-certs", action="store_true", help="Show internal certificates and exit")
     arg.add_argument("--export-certs", action="store_true", help="Export internal CA certificate and exit")
@@ -1194,11 +1272,25 @@ def entrypoint() -> None:
         print_update_status()
         sys.exit(0)
 
+    if opts.rebuild_caddy_only:
+        try:
+            cfg = ReverseProxyConfig.from_sources()
+            build_caddy(cfg.dns_provider, cfg.caddy_version)
+            print(f"✅ Rebuilt Caddy: {get_built_caddy_version()}")
+        except (InvalidSetupError, RuntimeError, OSError) as e:
+            print(f"❌ Failed to rebuild Caddy: {e}")
+            sys.exit(1)
+        sys.exit(0)
+
     if opts.export_certs:
         try:
             cert_info = export_caddy_internal_certs()
             instructions = render_upstream_tls_setup_guide(cert_info)
-            (DATADIR / "upstream-tls-setup.md").write_text(instructions, encoding="utf-8")
+            _atomic_write_text(
+                DATADIR / "upstream-tls-setup.md",
+                instructions,
+                mode=0o644,
+            )
             print("✅ Exported Caddy internal certificates")
             print(f"   CA Certificate (PEM): {cert_info['ca_cert_pem']}")
             print(f"   CA Certificate (CRT): {cert_info['ca_cert_crt']}")

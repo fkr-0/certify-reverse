@@ -251,6 +251,38 @@ class CliConfigTests(unittest.TestCase):
         self.assertEqual(desec.dns_token_field, "token")
         self.assertEqual(unknown.dns_token_field, "api_token")
 
+    def test_reverse_proxy_config_rejects_whitespace_only_dns_token(self):
+        with self.assertRaisesRegex(InvalidSetupError, "DNS_TOKEN"):
+            cli.ReverseProxyConfig(
+                dns_provider="desec",
+                dns_token="   ",
+                email="admin@example.com",
+                domain="example.com",
+            )
+
+    def test_reverse_proxy_config_rejects_reserved_generated_hosts(self):
+        for subdomain in ("status", "internal-ca"):
+            with self.subTest(subdomain=subdomain), self.assertRaisesRegex(
+                InvalidSetupError, "reserved"
+            ):
+                cli.ReverseProxyConfig(
+                    dns_provider="desec",
+                    dns_token="secret",
+                    email="admin@example.com",
+                    domain="example.com",
+                    upstreams=[cli.Upstream(subdomain, "10.0.0.2", 8080)],
+                )
+
+    def test_reverse_proxy_config_validates_direct_dnsmasq_mode(self):
+        with self.assertRaisesRegex(InvalidSetupError, "DNSMASQ_ADDRESS_MODE"):
+            cli.ReverseProxyConfig(
+                dns_provider="desec",
+                dns_token="secret",
+                email="admin@example.com",
+                domain="example.com",
+                dnsmasq_address_mode="invalid",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

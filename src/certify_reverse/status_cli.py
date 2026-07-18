@@ -4,8 +4,11 @@ Status display module for Caddy reverse proxy setup.
 Shows configuration, certificates, and directory structure in a nicely formatted display.
 """
 
-import sys
+import argparse
+import datetime
 import logging
+import sys
+from pathlib import Path
 
 try:
     from rich.console import Console
@@ -18,7 +21,7 @@ except ImportError:
     sys.exit(1)
 
 # Import our app modules
-from .cli import DATADIR, ReverseProxyConfig, InvalidSetupError, configure_logging
+from .cli import DATADIR, InvalidSetupError, ReverseProxyConfig
 
 console = Console()
 log = logging.getLogger(__name__)
@@ -193,7 +196,6 @@ def show_generated_files():
     
     for file_type, file_path in important_files:
         if file_path.exists():
-            import datetime
             mtime = datetime.datetime.fromtimestamp(file_path.stat().st_mtime)
             status = "✅ Exists"
             modified = mtime.strftime("%Y-%m-%d %H:%M:%S")
@@ -222,10 +224,14 @@ def show_full_status():
 
 def main():
     """Main entry point for status display."""
-    import argparse
-    configure_logging()
-    
+    global DATADIR
     parser = argparse.ArgumentParser(description="Display Caddy reverse proxy status")
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=DATADIR,
+        help="Data directory to inspect",
+    )
     parser.add_argument("--config", action="store_true", help="Show only configuration")
     parser.add_argument("--certs", action="store_true", help="Show only certificates")
     parser.add_argument("--services", action="store_true", help="Show only service directories")
@@ -233,6 +239,7 @@ def main():
     parser.add_argument("--data", action="store_true", help="Show only data directory")
     
     args = parser.parse_args()
+    DATADIR = args.data_dir.expanduser().resolve()
     
     # If no specific section requested, show everything
     if not any([args.config, args.certs, args.services, args.files, args.data]):

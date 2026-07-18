@@ -24,11 +24,12 @@ Run commands from the repository root:
 | `stop` | Stop containers without removing them | `./caddy-docker.sh stop` |
 | `restart` | Restart existing containers | `./caddy-docker.sh restart` |
 | `down` | Remove project containers and network | `./caddy-docker.sh down` |
-| `clean` | Interactively remove containers, networks, volumes, and prune Docker state | `./caddy-docker.sh clean` |
+| `clean` | Interactively remove this project's containers, network, and volumes | `./caddy-docker.sh clean` |
 
 !!! danger "Use `clean` deliberately"
 
-    It can delete volumes. Prefer `down` when you only want to recreate containers.
+    It deletes this project's volumes. Prefer `down` when you only want to recreate
+    containers. It does not prune global Docker state.
 
 ### Logs and inspection
 
@@ -52,7 +53,7 @@ fields, including multiline YAML block values.
 | --- | --- | --- |
 | `print-caddyfile` | Render the generated Caddyfile and exit | `./caddy-docker.sh print-caddyfile` |
 | `check-updates` | Compare the built Caddy version with the latest discoverable release | `./caddy-docker.sh check-updates` |
-| `rebuild-caddy` | Force a Caddy rebuild with the configured DNS plugin | `./caddy-docker.sh rebuild-caddy` |
+| `rebuild-caddy` | Build and validate Caddy, then restart the running Caddy service after success | `./caddy-docker.sh rebuild-caddy` |
 | `show-certs` | Print managed certificate subjects from generated configuration | `./caddy-docker.sh show-certs` |
 | `reload-dnsmasq` | Send SIGHUP to dnsmasq | `./caddy-docker.sh reload-dnsmasq` |
 | `app ARGS…` | Pass arguments directly to `certify-reverse` in the running container | `./caddy-docker.sh app --export-certs` |
@@ -104,6 +105,7 @@ certify-reverse [OPTIONS]
 | Option | Effect |
 | --- | --- |
 | `--rebuild-caddy` | Force a Caddy build before startup |
+| `--rebuild-caddy-only` | Rebuild and validate Caddy, then exit without starting the server |
 | `--force-build` | Deprecated alias for `--rebuild-caddy` |
 | `--update-caddy` | Force a Caddy build before startup |
 | `--show-certs` | Print managed certificate subjects and exit |

@@ -94,8 +94,11 @@ Runtime:
 - `app --<flags>` passthrough
 
 `rebuild-caddy` behavior:
-- If `caddy` service is running, it uses `docker compose exec caddy certify-reverse --rebuild-caddy`.
-- If `caddy` service is not running, it falls back to `docker compose run --rm --no-deps caddy --rebuild-caddy` (one-shot rebuild container).
+- If `caddy` is running, it invokes the build-only runtime operation, verifies
+  the exact DNS module and requested Caddy version, then restarts the service to
+  activate the validated binary.
+- If `caddy` is not running, it uses a one-shot build-only container and exits
+  without trying to start a second Caddy process.
 - Rebuild uses writable per-workdir Go caches (`/data/caddybuild/.cache`) so non-root UID/GID container runs do not fail on `/.cache/go-build` permissions.
 - `logs` behavior:
   - `./caddy-docker.sh logs` shows both `caddy` and `dnsmasq`.
@@ -222,9 +225,14 @@ The dashboard can also query live crt.sh via Caddy proxy endpoint:
 
 Update checks now also report whether the built Caddy binary exposes a native `upgrade` command.
 
-Generated runtime text/JSON/static files are replaced atomically. Internal
+Generated runtime text/JSON/static files are formatted before a single atomic
+replacement, and their parent directory is synced after installation. Internal
 service certificates are staged before installation, with private keys written
 as owner-only (`0600`) and public certificates as `0644`.
+
+The temporary Caddy build must be executable, report a semantic Caddy version,
+contain the exact configured `dns.providers.<provider>` module, and match an
+explicit version pin before it can replace the active binary.
 
 The exported internal root CA can be retrieved from the generated
 `internal-ca.<domain>` host at `/cert/caddy-internal-ca.pem` or

@@ -41,15 +41,18 @@ def run(
     capture: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     print("+", " ".join(command), file=sys.stderr)
-    completed = subprocess.run(
-        command,
-        cwd=cwd,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE if capture else None,
-        stderr=subprocess.PIPE if capture else None,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=cwd,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE if capture else None,
+            stderr=subprocess.PIPE if capture else None,
+            check=False,
+        )
+    except OSError as error:
+        raise DocsBuildError(f"could not execute {' '.join(command)}: {error}") from error
     if completed.returncode != 0:
         detail = ""
         if capture:
@@ -72,7 +75,10 @@ def project_version() -> str:
 def source_date() -> str:
     epoch = os.environ.get("SOURCE_DATE_EPOCH")
     if epoch:
-        return datetime.fromtimestamp(int(epoch), tz=timezone.utc).date().isoformat()
+        try:
+            return datetime.fromtimestamp(int(epoch), tz=timezone.utc).date().isoformat()
+        except (ValueError, OverflowError) as error:
+            raise DocsBuildError(f"invalid SOURCE_DATE_EPOCH: {epoch!r}") from error
     completed = run(["git", "log", "-1", "--format=%cs"], capture=True)
     value = completed.stdout.strip()
     return value or datetime.now(tz=timezone.utc).date().isoformat()
@@ -83,7 +89,10 @@ def command_version(command: str) -> str:
     if executable is None:
         raise DocsBuildError(f"required documentation tool is unavailable: {command}")
     completed = run([executable, "--version"], capture=True)
-    first_line = (completed.stdout or completed.stderr).splitlines()[0]
+    lines = (completed.stdout or completed.stderr).splitlines()
+    if not lines:
+        raise DocsBuildError(f"could not read {command} version")
+    first_line = lines[0]
     match = re.search(r"(\d+(?:\.\d+)+)", first_line)
     if match is None:
         raise DocsBuildError(f"could not parse {command} version from: {first_line}")
@@ -114,22 +123,51 @@ def ensure_external_toolchain() -> dict[str, str]:
     return actual
 
 
+def ensure_uv_toolchain() -> str:
+    expected_uv = str(read_toml(TOOLCHAIN_FILE)["package_manager"]["uv"])
+    actual_uv = command_version("uv")
+    if actual_uv != expected_uv and os.environ.get("DOCS_ALLOW_TOOLCHAIN_DRIFT") != "1":
+        raise DocsBuildError(
+            f"uv version drift: expected {expected_uv}, found {actual_uv}. "
+            "Set DOCS_ALLOW_TOOLCHAIN_DRIFT=1 only for an intentional local trial."
+        )
+    return actual_uv
+
+
 def ensure_docs_environment() -> Path:
-    if shutil.which("uv") is None:
-        raise DocsBuildError("uv is required to create the pinned documentation environment")
+    toolchain = read_toml(TOOLCHAIN_FILE)
+    actual_uv = ensure_uv_toolchain()
     if not LOCK_FILE.exists():
         raise DocsBuildError(
             f"missing {LOCK_FILE.relative_to(ROOT)}; run tools/docs/update-lock.sh"
         )
 
-    python_version = str(read_toml(TOOLCHAIN_FILE)["python"]["version"])
+    python_version = str(toolchain["python"]["version"])
     venv = CACHE_DIR / "venv"
     python = venv / "bin" / "python"
+    if python.exists():
+        try:
+            completed = run(
+                [
+                    str(python),
+                    "-c",
+                    "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')",
+                ],
+                capture=True,
+            )
+        except DocsBuildError:
+            shutil.rmtree(venv)
+        else:
+            if completed.stdout.strip() != python_version:
+                shutil.rmtree(venv)
     if not python.exists():
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         run(["uv", "venv", "--python", python_version, str(venv)])
 
-    lock_hash = hashlib.sha256(LOCK_FILE.read_bytes()).hexdigest()
+    fingerprint = hashlib.sha256()
+    fingerprint.update(LOCK_FILE.read_bytes())
+    fingerprint.update(f"\npython={python_version}\nuv={actual_uv}\n".encode())
+    lock_hash = fingerprint.hexdigest()
     stamp = venv / ".requirements.sha256"
     if not stamp.exists() or stamp.read_text(encoding="utf-8").strip() != lock_hash:
         run(
@@ -326,13 +364,15 @@ def build_man_pages() -> list[str]:
             )
         finally:
             temporary.unlink(missing_ok=True)
-        with output.open("rb") as input_stream, gzip.GzipFile(
-            filename="",
-            mode="wb",
-            fileobj=(output.with_suffix(output.suffix + ".gz")).open("wb"),
-            mtime=0,
-        ) as gzip_stream:
-            shutil.copyfileobj(input_stream, gzip_stream)
+        compressed_output = output.with_suffix(output.suffix + ".gz")
+        with output.open("rb") as input_stream, compressed_output.open("wb") as raw_output:
+            with gzip.GzipFile(
+                filename="",
+                mode="wb",
+                fileobj=raw_output,
+                mtime=0,
+            ) as gzip_stream:
+                shutil.copyfileobj(input_stream, gzip_stream)
         outputs.extend(
             [
                 str(output.relative_to(ROOT)),
@@ -350,10 +390,13 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def iter_output_files() -> Iterable[Path]:
+def iter_output_files(*, include_manifest: bool = False) -> Iterable[Path]:
     for path in sorted(DIST_DIR.rglob("*")):
-        if path.is_file() and path.name not in {"build-manifest.json", "certify-reverse-docs.tar.gz"}:
-            yield path
+        if not path.is_file() or path.name == "certify-reverse-docs.tar.gz":
+            continue
+        if path.name == "build-manifest.json" and not include_manifest:
+            continue
+        yield path
 
 
 def build_archive() -> Path:
@@ -361,7 +404,7 @@ def build_archive() -> Path:
     with archive.open("wb") as raw:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed:
             with tarfile.open(fileobj=compressed, mode="w") as tar:
-                for path in iter_output_files():
+                for path in iter_output_files(include_manifest=True):
                     info = tar.gettarinfo(str(path), arcname=str(path.relative_to(DIST_DIR)))
                     info.mtime = 0
                     info.uid = 0
@@ -424,6 +467,9 @@ def validate_outputs() -> None:
         content = (DIST_DIR / "man" / man_page).read_text(encoding="utf-8")
         if ".TH" not in content:
             raise DocsBuildError(f"generated man page lacks a .TH header: {man_page}")
+    with tarfile.open(DIST_DIR / "certify-reverse-docs.tar.gz", mode="r:gz") as archive:
+        if "build-manifest.json" not in archive.getnames():
+            raise DocsBuildError("documentation archive does not contain build-manifest.json")
 
 
 def clean() -> None:
@@ -439,12 +485,12 @@ def build() -> None:
     build_site(venv)
     chapters = build_handbook()
     man_outputs = build_man_pages()
-    build_archive()
     write_manifest(
         renderer_versions=renderer_versions,
         chapters=chapters,
         man_outputs=man_outputs,
     )
+    build_archive()
     validate_outputs()
     print(f"Documentation built in {DIST_DIR.relative_to(ROOT)}")
 
@@ -464,6 +510,7 @@ def serve() -> None:
 
 
 def update_lock() -> None:
+    ensure_uv_toolchain()
     run(
         [
             "uv",

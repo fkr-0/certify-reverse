@@ -70,7 +70,8 @@ Run the script from the repository root.
 : Compare built and latest discoverable Caddy versions.
 
 **rebuild-caddy**
-: Force a Caddy rebuild in the running service or a one-shot container.
+: Build and validate Caddy in the running service or a one-shot container. When
+  the service is running, restart it only after the validated binary is installed.
 
 **print-caddyfile**
 : Render the generated Caddyfile and write configuration-only output to stdout.
@@ -82,8 +83,8 @@ Run the script from the repository root.
 : Build the Caddy image without cache.
 
 **clean**
-: Interactively remove containers, networks, and volumes, then prune Docker state.
-  This command is destructive.
+: Interactively remove this Compose project's containers, network, and volumes.
+  This command is destructive but does not prune global Docker state.
 
 # PROJECT COMMANDS
 

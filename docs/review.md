@@ -7,8 +7,9 @@ Large deferred items are tracked in `issues.yml` with acceptance criteria.
 
 ### Runtime Caddy build remains operationally expensive
 
-certify-reverse can build Caddy with xcaddy during startup. The build is atomic and
-uses persistent writable caches, but still depends on:
+certify-reverse can build Caddy with xcaddy during startup. Candidate binaries are
+validated before atomic installation and use persistent writable caches, but the
+build still depends on:
 
 - outbound network access;
 - Go module availability;
@@ -92,6 +93,10 @@ runtime degrades these checks to `unknown` rather than aborting startup, which i
 right availability tradeoff, but dashboards and reports must not treat them as
 authoritative.
 
+Responses are size-bounded and malformed certificate rows are filtered, limiting
+the effect of unexpectedly large or irregular external payloads. This does not make
+those sources authoritative or continuously available.
+
 ### Documentation PDF still needs visual release review
 
 The publishing pipeline validates source links, JavaScript, output signatures, man
@@ -101,17 +106,19 @@ work.
 
 ## Completed hardening relevant to this review
 
-- exact Caddy plugin detection;
-- explicit pinned-version matching and atomic rebuild;
+- exact Caddy plugin detection before reuse and before candidate installation;
+- explicit pinned-version matching, executable validation, fsync, and atomic rebuild;
 - strict domain, upstream, environment, and path validation;
+- reserved generated-host collision rejection;
 - normalized upstream collision detection;
 - redacted multiline secret output;
-- atomic generated files;
+- atomic generated files and CA copies with parent-directory syncing;
 - restricted service private keys;
-- resilient external status lookups;
+- resilient, size-bounded external status lookups;
 - safe dashboard DOM construction and accessible interaction states;
 - Caddy adapter validation of generated configuration;
-- pinned, multi-format documentation publishing.
+- project-scoped destructive cleanup;
+- pinned, multi-format documentation publishing with manifest-bearing archives.
 
 ## Recommended next work
 

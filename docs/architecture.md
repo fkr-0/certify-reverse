@@ -53,11 +53,14 @@ configured upstream services
 5. The application checks whether `/data/caddy-rebuild` exists, contains the
    required exact DNS provider module, and matches an explicit version pin.
 6. When needed, xcaddy builds a temporary binary under `/data/caddybuild`.
-7. A successful temporary build atomically replaces the active binary.
-8. The application renders and atomically replaces runtime files.
-9. Optional trust extensions and certificate export/generation steps run.
-10. Caddy starts with the generated file or `Caddyfile.overwrite`.
-11. `os.execvp` replaces the Python process, making Caddy PID 1.
+7. The temporary executable must run, report a semantic Caddy version, expose the
+   exact requested DNS module, and match an explicit version pin.
+8. Only a validated and fsynced temporary binary atomically replaces the active
+   binary.
+9. The application renders and atomically replaces runtime files.
+10. Optional trust extensions and certificate export/generation steps run.
+11. Caddy starts with the generated file or `Caddyfile.overwrite`.
+12. `os.execvp` replaces the Python process, making Caddy PID 1.
 
 ## Configuration boundaries
 
@@ -88,8 +91,11 @@ check existing binary
    +-- yes -> reuse
    +-- no  -> xcaddy build temporary file
                     |
-                    +-- success -> atomic replace
-                    +-- failure -> keep previous binary
+                    +-- executable?
+                    +-- exact plugin present?
+                    +-- requested version matches?
+                    +-- all yes -> fsync + atomic replace
+                    +-- any no  -> keep previous binary
 ```
 
 Build caches, module caches, temporary files, and HOME/XDG directories are placed
@@ -114,8 +120,10 @@ IPv6 upstream literals are bracketed in both normal and probe routes.
 ## Data and atomicity
 
 Generated text, JSON, HTML, CA files, and static assets use same-directory temporary
-files followed by `os.replace`. This prevents readers from seeing a partially written
-file after interruption.
+files followed by `os.replace` and a best-effort parent-directory fsync. Caddyfile
+formatting happens before that replacement rather than through a later in-place
+rewrite. This prevents readers from seeing a partially written file after
+interruption and improves durability after abrupt termination.
 
 Service certificates use a paired staging process:
 
@@ -145,6 +153,10 @@ Browser data sources:
 
 The browser constructs rows with DOM APIs and `textContent`; runtime values are not
 inserted with `innerHTML`.
+
+Server-side GitHub and crt.sh snapshots are size-bounded before decoding. Malformed
+crt.sh rows are ignored, and only a bounded history set is persisted while the
+valid-row total remains available in metadata.
 
 ## Certificate model
 
@@ -208,8 +220,10 @@ docs/*.md
 ```
 
 Python documentation dependencies are hash-pinned. External renderer versions are
-recorded and enforced. A manifest records source order, tool versions, sizes, and
-SHA-256 hashes.
+recorded and enforced, including Python and `uv`. A stale docs environment is
+recreated when its Python version no longer matches. A manifest records source
+order, tool versions, sizes, and SHA-256 hashes and is included in the deterministic
+documentation archive.
 
 ## Idempotency profile
 

@@ -39,14 +39,14 @@ class CliBuildTests(unittest.TestCase):
         self.assertIn("offline", status["error"])
 
     def test_explicit_caddy_version_must_match_installed_binary(self):
-        with mock.patch.object(cli, "get_built_caddy_version", return_value="v2.10.0 h1:abc"):
+        with mock.patch.object(cli, "get_caddy_version", return_value="v2.10.0 h1:abc"):
             self.assertTrue(cli.caddy_matches_requested_version("v2.10.0"))
             self.assertTrue(cli.caddy_matches_requested_version("2.10.0"))
             self.assertFalse(cli.caddy_matches_requested_version("v2.10.1"))
             self.assertTrue(cli.caddy_matches_requested_version("latest"))
 
     def test_prerelease_caddy_version_requires_exact_match(self):
-        with mock.patch.object(cli, "get_built_caddy_version", return_value="v2.11.0-beta.1"):
+        with mock.patch.object(cli, "get_caddy_version", return_value="v2.11.0-beta.1"):
             self.assertTrue(cli.caddy_matches_requested_version("v2.11.0-beta.1"))
             self.assertFalse(cli.caddy_matches_requested_version("v2.11.0-beta.2"))
 
@@ -64,12 +64,19 @@ class CliBuildTests(unittest.TestCase):
                 captured = {}
 
                 def fake_run(cmd, **kw):
-                    captured["cmd"] = cmd
-                    captured["env"] = kw.get("env", {})
-                    captured["cwd"] = kw.get("cwd")
-                    out_path = Path(cmd[cmd.index("--output") + 1])
-                    out_path.write_text("new-binary", encoding="utf-8")
-                    return ""
+                    if cmd[0] == "xcaddy":
+                        captured["cmd"] = cmd
+                        captured["env"] = kw.get("env", {})
+                        captured["cwd"] = kw.get("cwd")
+                        out_path = Path(cmd[cmd.index("--output") + 1])
+                        out_path.write_text("new-binary", encoding="utf-8")
+                        out_path.chmod(0o755)
+                        return ""
+                    if cmd[1] == "list-modules":
+                        return "dns.providers.desec\n"
+                    if cmd[1] == "version":
+                        return "v2.10.0 h1:abc\n"
+                    raise AssertionError(cmd)
 
                 with mock.patch.object(cli, "run", side_effect=fake_run):
                     cli.build_caddy("desec", "v2.10.0")
@@ -84,6 +91,41 @@ class CliBuildTests(unittest.TestCase):
                 self.assertTrue(captured["env"]["GOMODCACHE"].startswith(str(cli.WORK)))
                 self.assertTrue(captured["env"]["XDG_CACHE_HOME"].startswith(str(cli.WORK)))
                 self.assertEqual(cli.CADDY.read_text(encoding="utf-8"), "new-binary")
+        finally:
+            cli.WORK = old_work
+            cli.CADDY = old_caddy
+
+    def test_build_caddy_rejects_unvalidated_binary_and_preserves_existing_one(self):
+        old_work = cli.WORK
+        old_caddy = cli.CADDY
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                td = Path(tmp)
+                cli.WORK = td / "work"
+                cli.CADDY = td / "caddy-rebuild"
+                cli.WORK.mkdir(parents=True, exist_ok=True)
+                cli.CADDY.write_text("known-good", encoding="utf-8")
+
+                def fake_run(cmd, **kw):
+                    if cmd[0] == "xcaddy":
+                        out_path = Path(cmd[cmd.index("--output") + 1])
+                        out_path.write_text("bad-build", encoding="utf-8")
+                        out_path.chmod(0o755)
+                        return ""
+                    if cmd[1] == "list-modules":
+                        return "dns.providers.cloudflare\n"
+                    if cmd[1] == "version":
+                        return "v2.10.0\n"
+                    raise AssertionError(cmd)
+
+                with (
+                    mock.patch.object(cli, "run", side_effect=fake_run),
+                    self.assertRaisesRegex(RuntimeError, "missing required module"),
+                ):
+                    cli.build_caddy("desec", "v2.10.0")
+
+                self.assertEqual(cli.CADDY.read_text(encoding="utf-8"), "known-good")
+                self.assertFalse((cli.WORK / "caddy-rebuild.new").exists())
         finally:
             cli.WORK = old_work
             cli.CADDY = old_caddy

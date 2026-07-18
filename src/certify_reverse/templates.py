@@ -54,7 +54,7 @@ def render_caddy(cfg: "ReverseProxyConfig") -> str:
         status_lines.append(f"    handle_path /probe/{upstream.subdomain}/* " + "{")
         status_lines.append(f"        reverse_proxy {_render_upstream_target(upstream)} " + "{")
         if upstream.forward_auth_headers:
-            status_lines.append("            header_up X-Real-IP {remote}")
+            status_lines.append("            header_up X-Real-IP {remote_host}")
         if upstream.is_https:
             transport_config = _render_transport_config(upstream)
             if transport_config:
@@ -112,7 +112,7 @@ def _render_upstream_block(upstream: "Upstream", cfg: "ReverseProxyConfig") -> s
 
     # Forward authentication headers if enabled
     if upstream.forward_auth_headers:
-        block.append("        header_up X-Real-IP {remote}")
+        block.append("        header_up X-Real-IP {remote_host}")
 
     # Handle HTTPS transport configuration
     if upstream.is_https:

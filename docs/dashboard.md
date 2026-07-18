@@ -27,12 +27,19 @@ response. This distinguishes network reachability from application health.
 
 The browser checks the server-side `status.<domain>/probe/<service>/` routes.
 They do not expose the peer certificate chain, cipher, or expiry details.
+Responses below HTTP 500 count as reachable—even when authentication returns 401 or
+a route returns 404—while HTTP 5xx responses count as failed service checks.
 
 ### Certificates
 
 - The local snapshot comes from `/crtsh-state.json`.
+- Server-side snapshot downloads are size-bounded, malformed rows are ignored,
+  and at most 5,000 valid rows are persisted. Metadata retains the total valid-row
+  count and reports whether storage was truncated.
 - **Refresh live** queries crt.sh through `/probe/crtsh` to avoid browser CORS
   restrictions.
+- Browser JSON reads are aborted when they exceed 8 MiB, including streamed
+  responses without a trustworthy `Content-Length` header.
 - Certificate history can be filtered client-side.
 - At most 200 matching history rows are inserted into the DOM to keep large
   result sets responsive.

@@ -1,3 +1,4 @@
+import io
 import json
 import sys
 import tempfile
@@ -26,6 +27,36 @@ class CliCrtShTests(unittest.TestCase):
         latest, validity = _crtsh_latest([])
         self.assertIsNone(latest)
         self.assertEqual(validity, "none")
+
+    def test_fetch_crtsh_state_ignores_malformed_rows_and_caps_storage(self):
+        rows = [
+            {"id": index, "not_after": "2099-01-01"}
+            for index in range(cli._CRTSH_MAX_ENTRIES + 3)
+        ]
+        rows.insert(1, "not-an-object")
+        class _Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self.close()
+
+        with mock.patch.object(
+            cli,
+            "urlopen",
+            return_value=_Response(json.dumps(rows).encode("utf-8")),
+        ):
+            state = cli.fetch_crtsh_state("example.com")
+
+        self.assertEqual(state["match_count"], cli._CRTSH_MAX_ENTRIES + 3)
+        self.assertEqual(state["stored_count"], cli._CRTSH_MAX_ENTRIES)
+        self.assertTrue(state["entries_truncated"])
+        self.assertEqual(state["ignored_malformed_entries"], 1)
+        self.assertEqual(len(state["entries"]), cli._CRTSH_MAX_ENTRIES)
+
+    def test_read_limited_response_rejects_oversized_payload(self):
+        with self.assertRaisesRegex(ValueError, "exceeds"):
+            cli._read_limited_response(io.BytesIO(b"12345"), 4, "test")
 
     def test_status_assets_degrade_cleanly_on_crtsh_transport_failure(self):
         old_values = {

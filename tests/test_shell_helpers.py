@@ -117,6 +117,46 @@ class ShellHelperTests(unittest.TestCase):
             self.assertIn("private_key: ***REDACTED***", result.stdout)
             self.assertIn("label: visible", result.stdout)
 
+    def test_config_command_reads_project_files_when_invoked_elsewhere(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as other:
+            root = Path(tmp)
+            script = root / "caddy-docker.sh"
+            shutil.copy2(ROOT / "caddy-docker.sh", script)
+            shutil.copy2(ROOT / "pyproject.toml", root / "pyproject.toml")
+            (root / ".env").write_text(
+                "DNS_TOKEN=do-not-print\nDOMAIN=project.example\n",
+                encoding="utf-8",
+            )
+            (root / "upstreams.yml").write_text(
+                "app:\n  ip: backend\n  port: 8080\n",
+                encoding="utf-8",
+            )
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            _link_commands(bin_dir, "cat", "dirname", "id", "sed")
+            fake_docker = bin_dir / "docker"
+            fake_docker.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake_docker.chmod(0o755)
+
+            result = subprocess.run(
+                ["/bin/bash", str(script), "config"],
+                cwd=other,
+                env={"PATH": str(bin_dir)},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("DOMAIN=project.example", result.stdout)
+            self.assertNotIn("do-not-print", result.stdout)
+
+    def test_rebuild_helper_uses_build_only_mode_then_restarts(self):
+        script = (ROOT / "caddy-docker.sh").read_text(encoding="utf-8")
+
+        self.assertIn('certify-reverse --rebuild-caddy-only', script)
+        self.assertIn('compose restart "$COMPOSE_SERVICE"', script)
+
 
 if __name__ == "__main__":
     unittest.main()

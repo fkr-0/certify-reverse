@@ -51,7 +51,7 @@ Remove containers and the project network:
 ```
 
 `down` is usually safer than `clean` because it does not intentionally remove
-volumes or prune unrelated Docker state.
+volumes. `clean` is project-scoped and does not prune unrelated Docker state.
 
 ## Follow logs
 
@@ -162,8 +162,11 @@ Then restart or rebuild:
 ./caddy-docker.sh rebuild-caddy
 ```
 
-certify-reverse builds to a temporary binary and replaces the active file only after
-a successful build.
+The wrapper runs a build-only operation. The temporary binary must be executable,
+contain the exact configured DNS module, and match the requested version before it
+can replace the active file. When Caddy is already running, the wrapper restarts
+only the Caddy service after successful installation. A failed validation leaves
+the previous binary and running process untouched.
 
 After an upgrade:
 

@@ -50,8 +50,8 @@ dist/docs/
 │   └── caddy-docker.1.gz
 ├── certify-reverse-handbook.html          # standalone embedded-resource HTML
 ├── certify-reverse-handbook.pdf           # A4 PDF
-├── certify-reverse-docs.tar.gz             # deterministic release archive
-└── build-manifest.json                     # tool versions, sizes, SHA-256 hashes
+├── build-manifest.json                     # tool versions, sizes, SHA-256 hashes
+└── certify-reverse-docs.tar.gz             # deterministic archive, including manifest
 ```
 
 The static site can be copied to any ordinary web server. It has no server-side
@@ -70,7 +70,9 @@ tools/docs/requirements.lock.txt
 ```
 
 The lock contains exact package versions and hashes. The build script creates a
-dedicated environment below `.cache/docs/venv` and synchronizes it with `uv`.
+dedicated environment below `.cache/docs/venv` and synchronizes it with the pinned
+`uv` version. It recreates the environment automatically when its Python major/minor
+version no longer matches `toolchain.toml`.
 
 Refresh the lock only as an intentional maintenance change:
 
@@ -88,13 +90,14 @@ Expected renderer versions are recorded in:
 tools/docs/toolchain.toml
 ```
 
-The current pipeline uses:
+The current pipeline pins:
 
+- Python and `uv` for the isolated MkDocs environment;
 - Pandoc to assemble the handbook and render man pages;
 - WeasyPrint to print the standalone handbook HTML to A4 PDF;
 - groff as the local man-page inspection tool.
 
-The build fails when renderer versions drift. For an intentional local experiment,
+The build fails when `uv` or renderer versions drift. For an intentional local experiment,
 you may set:
 
 ```bash
@@ -237,7 +240,7 @@ SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) ./caddy-docker.sh docs-check
 
 The generated archive uses zeroed timestamps, numeric ownership, and stable path
 ordering. `build-manifest.json` records renderer versions and SHA-256 hashes for all
-other outputs.
+other outputs and is itself included in the archive.
 
 ## Release integration
 
@@ -254,5 +257,6 @@ A release is not ready when:
 - the PDF is absent or malformed;
 - either man page lacks its roff header;
 - the dependency lock and environment differ;
-- renderer versions differ from `toolchain.toml`;
+- the pinned Python, `uv`, or renderer versions differ from `toolchain.toml`;
+- the documentation archive omits `build-manifest.json`;
 - documentation examples fail their syntax or Compose checks.

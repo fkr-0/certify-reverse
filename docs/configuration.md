@@ -297,10 +297,14 @@ Names cannot contain path separators, whitespace, Caddyfile control characters, 
 invalid DNS labels. The validation also prevents a service name from escaping its
 runtime data directory.
 
-Avoid reserved generated hosts:
+The generated endpoint names are reserved and rejected during validation:
 
 - `status.<DOMAIN>`;
 - `internal-ca.<DOMAIN>`.
+
+`DNS_TOKEN` is trimmed and must contain at least one non-whitespace character.
+`DNSMASQ_ADDRESS_MODE` is validated even when configuration objects are created
+programmatically rather than loaded through `.env`.
 
 ## Complete multi-service example
 

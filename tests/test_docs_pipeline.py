@@ -6,6 +6,7 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
@@ -68,6 +69,21 @@ class DocsPipelineTests(unittest.TestCase):
         self.assertGreaterEqual(len(requirements), 10)
         self.assertIn("--hash=sha256:", lock)
         self.assertNotRegex(lock, r"^[a-z0-9][a-z0-9._-]*\s*(?:>=|~=|<)", re.M)
+
+    def test_documentation_toolchain_pins_python_uv_and_renderers(self):
+        toolchain = tomllib.loads(
+            (ROOT / "tools" / "docs" / "toolchain.toml").read_text(encoding="utf-8")
+        )
+
+        self.assertRegex(toolchain["python"]["version"], r"^\d+\.\d+$")
+        self.assertRegex(toolchain["package_manager"]["uv"], r"^\d+\.\d+\.\d+$")
+        for renderer in ("pandoc", "weasyprint", "groff"):
+            self.assertRegex(toolchain["renderers"][renderer], r"^\d+(?:\.\d+)+$")
+
+    def test_invalid_source_date_epoch_has_actionable_error(self):
+        with mock.patch.dict("os.environ", {"SOURCE_DATE_EPOCH": "not-a-number"}):
+            with self.assertRaisesRegex(self.module.DocsBuildError, "SOURCE_DATE_EPOCH"):
+                self.module.source_date()
 
     def test_internal_markdown_links_are_rewritten_for_handbook(self):
         module = self.module

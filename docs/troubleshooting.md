@@ -91,8 +91,11 @@ df -h . caddy-data
 find caddy-data -maxdepth 2 -printf '%M %u:%g %p\n' | head -n 40
 ```
 
-The build is atomic. A failed temporary build should not replace the existing Caddy
-binary.
+The build is atomic and validated before installation. A candidate is rejected when
+it is empty, non-executable, cannot report a semantic version, lacks the exact
+`dns.providers.<provider>` module, or does not match an explicit version pin. In all
+of those cases, the existing Caddy binary remains in place and a running service is
+not restarted.
 
 ## DNS plugin rejects the token field
 

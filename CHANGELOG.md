@@ -47,6 +47,14 @@ All notable changes to this project are documented here.
   and renders every documentation format.
 - Handbook chapter headings now receive explicit stable identifiers so links do
   not depend on differing MkDocs and Pandoc slug algorithms.
+- Caddy rebuilds now use a dedicated build-only CLI operation, validate the
+  temporary executable's exact DNS module and requested version, fsync it, and
+  restart the service only after successful installation.
+- Documentation publishing now pins the `uv` version, recreates stale Python
+  environments automatically, and includes `build-manifest.json` inside the
+  deterministic release archive.
+- The dnsmasq service no longer uses a global fixed container name, allowing
+  separate Compose project instances to coexist.
 
 ### Fixed
 
@@ -57,6 +65,31 @@ All notable changes to this project are documented here.
   headers, non-empty outputs, and required artifact layout.
 - Corrected cross-format links for headings containing punctuation such as
   `WordPress + Telegram`.
+- Removed the non-atomic `caddy fmt --overwrite` pass; generated Caddyfiles are
+  formatted before their single atomic replacement.
+- Rejected whitespace-only DNS tokens, invalid direct dnsmasq modes, and
+  upstreams that collide with generated `status` or `internal-ca` hosts.
+- Bounded GitHub and crt.sh response sizes, ignored malformed crt.sh rows, and
+  capped persisted certificate-history entries while retaining total counts.
+- Corrected `X-Real-IP` forwarding to use Caddy's host-only remote placeholder
+  instead of an address containing the client port.
+- Fixed `config` inspection when the wrapper is invoked outside the repository
+  directory and added the documented `--data-dir` status CLI option.
+- Kept the read-only status CLI free of runtime logging-directory writes, so a
+  custom `--data-dir` does not still touch `/data`.
+- Made CA distribution copies and generated operator guides use the same atomic,
+  permission-controlled write path as the other runtime assets.
+
+### Security
+
+- Failed or malformed Caddy builds can no longer replace the last known-good
+  binary merely because xcaddy created an output file.
+- Parent directories are fsynced after atomic runtime replacements, improving
+  durability across abrupt host or container termination.
+- External status responses are size-bounded before decoding to prevent
+  unbounded memory and persisted-state growth.
+- Browser dashboard JSON reads are stream-bounded, and service checks no longer
+  report HTTP 5xx proxy/application failures as successful reachability.
 
 ## [0.5.4] - 2026-07-18
 

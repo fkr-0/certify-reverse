@@ -15,6 +15,8 @@ certify-reverse - build and run a Caddy reverse proxy with a DNS provider plugin
 **certify-reverse** [**--rebuild-caddy**] [**--show-certs**]
 [**--print-caddyfile**]
 
+**certify-reverse** **--rebuild-caddy-only**
+
 **certify-reverse** **--export-certs**
 
 **certify-reverse** **--create-service-dirs**
@@ -35,6 +37,10 @@ usually use **caddy-docker**(1) rather than running it directly.
 
 **--rebuild-caddy**
 : Force a Caddy rebuild before startup.
+
+**--rebuild-caddy-only**
+: Rebuild and validate the configured Caddy version and DNS provider module, then
+  exit without starting Caddy.
 
 **--force-build**
 : Deprecated alias for **--rebuild-caddy**.

@@ -215,26 +215,30 @@ check_updates() { compose exec "$COMPOSE_SERVICE" certify-reverse --check-update
 rebuild_caddy() {
   if caddy_is_running; then
     log_info "Rebuilding Caddy in running service container..."
-    compose exec "$COMPOSE_SERVICE" certify-reverse --rebuild-caddy
+    compose exec "$COMPOSE_SERVICE" certify-reverse --rebuild-caddy-only
+    log_info "Restarting Caddy to activate the validated binary..."
+    compose restart "$COMPOSE_SERVICE"
+    log_success "Caddy rebuilt and restarted"
     return
   fi
   log_warn "Service '$COMPOSE_SERVICE' is not running; using one-shot rebuild container."
-  compose run --rm --no-deps "$COMPOSE_SERVICE" --rebuild-caddy
+  compose run --rm --no-deps "$COMPOSE_SERVICE" --rebuild-caddy-only
 }
 print_caddyfile() { compose_caddyfile run --rm caddy; }
 
 show_config() {
+  cd "$SCRIPT_DIR"
   log_info "Runtime configuration"
   echo "=== .env ==="
-  if [[ -f .env ]]; then
-    redact_env_file .env
+  if [[ -f "$SCRIPT_DIR/.env" ]]; then
+    redact_env_file "$SCRIPT_DIR/.env"
   else
     log_warn ".env not found"
   fi
   echo
   echo "=== upstreams.yml ==="
-  if [[ -f upstreams.yml ]]; then
-    redact_yaml_file upstreams.yml
+  if [[ -f "$SCRIPT_DIR/upstreams.yml" ]]; then
+    redact_yaml_file "$SCRIPT_DIR/upstreams.yml"
   else
     log_warn "upstreams.yml not found"
   fi
@@ -281,11 +285,11 @@ reload_dnsmasq() {
 }
 
 clean_all() {
-  log_warn "This will remove containers, networks, and volumes. Continue? (y/N)"
+  log_warn "This will remove this project's containers, networks, and volumes. Continue? (y/N)"
   read -r response
   if [[ "$response" =~ ^[Yy]$ ]]; then
     compose down -v --remove-orphans
-    docker system prune -f
+    log_success "Project containers, networks, and volumes removed"
   fi
 }
 
@@ -349,7 +353,7 @@ release_note() { echo "Release v$(project_version)"; }
 create_tag() {
   cd "$SCRIPT_DIR"
   local v="v$(project_version)"
-  git tag "$v"
+  git tag -a "$v" -m "certify-reverse $v"
   log_success "Created tag $v"
 }
 
